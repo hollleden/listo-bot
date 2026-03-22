@@ -1,25 +1,31 @@
+import asyncio
 import logging
 import os
-import asyncio
-from telegram import Update
-from telegram.ext import Application, MessageHandler, filters, ContextTypes, CommandHandler
+from aiogram import Bot, Dispatcher, F
+from aiogram.filters import CommandStart
+from aiogram.types import Message
+from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from dotenv import load_dotenv
 from pipeline import process_media
 from database import init_db
 from digest import send_weekly_digest, send_quarterly_digest
-from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
 load_dotenv()
 
 logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
 
-TELEGRAM_TOKEN = os.getenv("BOT_TOKEN")
-YOUR_CHAT_ID = os.getenv("ALLOWED_ID")
+BOT_TOKEN = os.getenv("BOT_TOKEN")
+ALLOWED_ID = int(os.getenv("ALLOWED_ID"))
+
+bot = Bot(token=BOT_TOKEN)
+dp = Dispatcher()
 
 
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text(
+@dp.message(CommandStart())
+async def start(message: Message):
+    if message.from_user.id != ALLOWED_ID:
+        return
+    await message.answer(
         "👋 Hola! Я Listo — твой второй мозг.\n\n"
         "Скидывай мне фото или видео из TikTok/Reels — "
         "я прочитаю, разберу и сохраню.\n\n"
@@ -27,50 +33,44 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
 
-async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("⚙️ Читаю...")
+@dp.message(F.photo)
+async def handle_photo(message: Message):
+    if message.from_user.id != ALLOWED_ID:
+        return
+    await message.answer("⚙️ Читаю...")
 
-    photo = update.message.photo[-1]
-    file = await context.bot.get_file(photo.file_id)
-    file_bytes = await file.download_as_bytearray()
-
-    result = await process_media(bytes(file_bytes), media_type="image")
-    await update.message.reply_text(result, parse_mode="Markdown")
-
-
-async def handle_video(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("⚙️ Обрабатываю видео, займёт ~20 секунд...")
-
-    video = update.message.video or update.message.document
-    file = await context.bot.get_file(video.file_id)
-    file_bytes = await file.download_as_bytearray()
-
-    result = await process_media(bytes(file_bytes), media_type="video")
-    await update.message.reply_text(result, parse_mode="Markdown")
+    photo = message.photo[-1]
+    file = await bot.get_file(photo.file_id)
+    file_bytes = await bot.download_file(file.file_path)
+    result = await process_media(file_bytes.read(), media_type="image")
+    await message.answer(result, parse_mode="Markdown")
 
 
-def main():
+@dp.message(F.video | F.document)
+async def handle_video(message: Message):
+    if message.from_user.id != ALLOWED_ID:
+        return
+    await message.answer("⚙️ Обрабатываю видео, займёт ~20 секунд...")
+
+    video = message.video or message.document
+    file = await bot.get_file(video.file_id)
+    file_bytes = await bot.download_file(file.file_path)
+    result = await process_media(file_bytes.read(), media_type="video")
+    await message.answer(result, parse_mode="Markdown")
+
+
+async def main():
     init_db()
 
-    app = Application.builder().token(TELEGRAM_TOKEN).build()
-
-    app.add_handler(CommandHandler("start", start))
-    app.add_handler(MessageHandler(filters.PHOTO, handle_photo))
-    app.add_handler(MessageHandler(filters.VIDEO | filters.Document.VIDEO, handle_video))
-
     scheduler = AsyncIOScheduler()
-
-    # Еженедельный дайджест — каждое воскресенье в 10:00
     scheduler.add_job(
         send_weekly_digest,
         "cron",
         day_of_week="sun",
         hour=10,
         minute=0,
-        args=[app.bot, YOUR_CHAT_ID],
+        args=[bot, ALLOWED_ID],
     )
-
-    # Квартальный дайджест — 1 января, апреля, июля, октября
     scheduler.add_job(
         send_quarterly_digest,
         "cron",
@@ -78,12 +78,12 @@ def main():
         day=1,
         hour=10,
         minute=0,
-        args=[app.bot, YOUR_CHAT_ID],
+        args=[bot, ALLOWED_ID],
     )
-
     scheduler.start()
-    app.run_polling()
+
+    await dp.start_polling(bot)
 
 
 if __name__ == "__main__":
-    main()
+    asyncio.run(main())
