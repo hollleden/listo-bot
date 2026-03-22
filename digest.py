@@ -1,9 +1,9 @@
 import os
 from datetime import datetime
 from database import get_entries_since
-import google.generativeai as genai
+import google.genai as genai
 
-genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
+client = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
 
 CONTENT_TYPES = {
     "book": "📚 Books",
@@ -46,7 +46,6 @@ def _build_digest(entries, digest_type: str) -> str:
 
 
 def _get_quarterly_insight(summaries: list) -> str:
-    model = genai.GenerativeModel("gemini-2.0-flash")
     prompt = f"""Here is what the person saved over the last 3 months:
 {chr(10).join(summaries[:30])}
 
@@ -54,7 +53,10 @@ Write 2-3 sentences — what themes and patterns stand out?
 What does this say about their interests right now? 
 Be warm and friendly."""
 
-    response = model.generate_content(prompt)
+    response = client.models.generate_content(
+        model="gemini-2.0-flash",
+        contents=prompt,
+    )
     return response.text
 
 
