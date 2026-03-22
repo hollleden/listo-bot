@@ -12,33 +12,33 @@ genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
 claude = anthropic.Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
 
 CONTENT_TYPES = {
-    "book": "📚 Книга",
-    "place": "🌍 Место",
-    "recipe": "🍽️ Рецепт",
-    "philosophy": "🧠 Философия",
-    "spanish": "💃 Испанский",
-    "film": "🎬 Фильм / сериал",
-    "health": "💚 Здоровье",
-    "other": "📌 Другое",
+    "book": "📚 Book",
+    "place": "🌍 Place",
+    "recipe": "🍽️ Recipe",
+    "philosophy": "🧠 Philosophy",
+    "spanish": "💃 Spanish",
+    "film": "🎬 Film / Series",
+    "health": "💚 Health",
+    "other": "📌 Other",
 }
 
 
 def _extract_image(file_bytes: bytes) -> str:
-    model = genai.GenerativeModel("gemini-1.5-flash")
+    model = genai.GenerativeModel("gemini-2.0-flash")
     image_part = {
         "mime_type": "image/jpeg",
         "data": base64.b64encode(file_bytes).decode(),
     }
     prompt = (
-        "Извлеки ВЕСЬ текст с этого скриншота дословно. "
-        "Затем опиши что изображено."
+        "Extract ALL text from this screenshot verbatim. "
+        "Then describe what is shown in the image."
     )
     response = model.generate_content([prompt, image_part])
     return response.text
 
 
 def _extract_video(file_bytes: bytes) -> str:
-    model = genai.GenerativeModel("gemini-1.5-flash")
+    model = genai.GenerativeModel("gemini-2.0-flash")
 
     with tempfile.NamedTemporaryFile(suffix=".mp4", delete=False) as f:
         f.write(file_bytes)
@@ -51,8 +51,8 @@ def _extract_video(file_bytes: bytes) -> str:
             video_file = genai.get_file(video_file.name)
 
         prompt = (
-            "Извлеки ВЕСЬ текст с субтитров и оверлеев этого видео. "
-            "Транскрибируй всю речь. Опиши что происходит."
+            "Extract ALL text from subtitles and overlays in this video. "
+            "Transcribe all speech. Describe what is happening."
         )
         response = model.generate_content([prompt, video_file])
         return response.text
@@ -61,33 +61,33 @@ def _extract_video(file_bytes: bytes) -> str:
 
 
 def _analyze(raw_content: str) -> dict:
-    prompt = f"""Ты ассистент для организации сохранённого контента из TikTok и Reels.
+    prompt = f"""You are an assistant for organizing saved content from TikTok and Reels.
 
-Вот содержимое медиа:
+Here is the media content:
 {raw_content}
 
-Проанализируй и верни JSON со следующими полями:
+Analyze it and return a JSON with the following fields:
 {{
   "content_type": "book|place|recipe|philosophy|spanish|film|health|other",
-  "summary": "саммари на русском, 2-4 предложения",
-  "tags": ["тег1", "тег2", "тег3"],
+  "summary": "summary in English, 2-4 sentences",
+  "tags": ["tag1", "tag2", "tag3"],
   "folder": "Crecer|Descanso|Salud|Creatividad|Dinero|Trabajo|Personal",
   "fact_check": [
-    {{"claim": "конкретное утверждение из контента", "verdict": "✅ Верно|⚠️ Спорно|❌ Неверно|🔍 Не проверить", "note": "краткое пояснение"}}
+    {{"claim": "specific factual claim from the content", "verdict": "✅ True|⚠️ Disputed|❌ False|🔍 Can't verify", "note": "brief explanation"}}
   ],
   "enrichment": {{}}
 }}
 
-Правила для folder:
-- Книги, философия, испанский, рост → Crecer
-- Путешествия, места, отдых → Descanso
-- Здоровье, рецепты, волосы, тело → Salud
-- Фильмы, творчество, вдохновение → Creatividad
-- Деньги, инвестиции → Dinero
-- Работа → Trabajo
-- Всё остальное → Personal
+Folder rules:
+- Books, philosophy, Spanish, personal growth → Crecer
+- Travel, places, rest → Descanso
+- Health, recipes, hair, body → Salud
+- Films, creativity, inspiration → Creatividad
+- Money, investments → Dinero
+- Work → Trabajo
+- Everything else → Personal
 
-Для enrichment заполни по типу:
+For enrichment fill in based on type:
 - book: {{"author": "", "year": "", "genre": "", "goodreads_rating": "", "available_in_russian": ""}}
 - place: {{"country": "", "city": "", "best_season": "", "approx_budget": ""}}
 - recipe: {{"cook_time": "", "difficulty": "easy|medium|hard", "key_ingredients": [], "dietary": ""}}
@@ -96,7 +96,7 @@ def _analyze(raw_content: str) -> dict:
 - film: {{"year": "", "genre": "", "imdb_rating": "", "where_to_watch": ""}}
 - health: {{"topic": "", "evidence_level": "scientific|popular|anecdotal"}}
 
-Верни ТОЛЬКО валидный JSON без markdown и без лишних символов."""
+Return ONLY valid JSON, no markdown, no extra text."""
 
     response = claude.messages.create(
         model="claude-sonnet-4-20250514",
@@ -112,16 +112,16 @@ def _analyze(raw_content: str) -> dict:
 
 def _format(analysis: dict) -> str:
     ct = analysis.get("content_type", "other")
-    type_label = CONTENT_TYPES.get(ct, "📌 Другое")
+    type_label = CONTENT_TYPES.get(ct, "📌 Other")
     folder = analysis.get("folder", "Personal")
     summary = analysis.get("summary", "")
     tags = " ".join([f"#{t.replace(' ', '_').lower()}" for t in analysis.get("tags", [])])
 
-    # Факт-чек
+    # Fact-check
     fc_lines = []
     for fc in analysis.get("fact_check", []):
         fc_lines.append(f"{fc['verdict']} _{fc['claim']}_ — {fc['note']}")
-    fact_check_text = "\n".join(fc_lines) if fc_lines else "🔍 Конкретных фактов для проверки нет"
+    fact_check_text = "\n".join(fc_lines) if fc_lines else "🔍 No specific facts to verify"
 
     # Обогащение
     enrich = analysis.get("enrichment", {})
@@ -135,13 +135,13 @@ def _format(analysis: dict) -> str:
 
     result = (
         f"{type_label} · 📁 {folder}\n\n"
-        f"📝 *Саммари*\n{summary}\n\n"
+        f"📝 *Summary*\n{summary}\n\n"
         f"🏷 {tags}\n\n"
-        f"✅ *Факт-чек*\n{fact_check_text}"
+        f"✅ *Fact-check*\n{fact_check_text}"
     )
 
     if enrich_text:
-        result += f"\n\n🔎 *Детали*\n{enrich_text}"
+        result += f"\n\n🔎 *Details*\n{enrich_text}"
 
     return result
 
@@ -166,4 +166,4 @@ async def process_media(file_bytes: bytes, media_type: str) -> str:
         return _format(analysis)
 
     except Exception as e:
-        return f"❌ Что-то пошло не так: {str(e)}"
+        return f"❌ Something went wrong: {str(e)}"
