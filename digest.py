@@ -64,7 +64,7 @@ async def send_weekly_digest(bot, chat_id):
         await bot.send_message(chat_id=chat_id, text="🗞 Nothing saved this week!")
         return
     digest = _build_digest(entries, "weekly")
-    await bot.send_message(chat_id=chat_id, text=digest, parse_mode="Markdown")
+    await bot.send_message(chat_id=chat_id, text=digest)
 
 
 async def send_quarterly_digest(bot, chat_id):
@@ -72,4 +72,4 @@ async def send_quarterly_digest(bot, chat_id):
     if not entries:
         return
     digest = _build_digest(entries, "quarterly")
-    await bot.send_message(chat_id=chat_id, text=digest, parse_mode="Markdown")
+    await bot.send_message(chat_id=chat_id, text=digest)
