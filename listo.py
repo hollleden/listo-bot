@@ -14,8 +14,8 @@ load_dotenv()
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
-YOUR_CHAT_ID = os.getenv("YOUR_CHAT_ID")
+TELEGRAM_TOKEN = os.getenv("BOT_TOKEN")
+YOUR_CHAT_ID = os.getenv("ALLOWED_ID")
 
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
