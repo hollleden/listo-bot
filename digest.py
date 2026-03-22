@@ -2,8 +2,12 @@ import os
 from datetime import datetime
 from database import get_entries_since
 import google.genai as genai
+from google.genai import types as genai_types
 
-client = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
+client = genai.Client(
+    api_key=os.getenv("GEMINI_API_KEY"),
+    http_options=genai_types.HttpOptions(api_version="v1"),
+)
 
 CONTENT_TYPES = {
     "book": "📚 Books",
@@ -54,7 +58,7 @@ What does this say about their interests right now?
 Be warm and friendly."""
 
     response = client.models.generate_content(
-        model="gemini-1.5-flash",
+        model="gemini-2.5-flash-lite-latest",
         contents=prompt,
     )
     return response.text
