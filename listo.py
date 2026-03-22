@@ -26,10 +26,10 @@ async def start(message: Message):
     if message.from_user.id != ALLOWED_ID:
         return
     await message.answer(
-        "👋 Hola! Я Listo — твой второй мозг.\n\n"
-        "Скидывай мне фото или видео из TikTok/Reels — "
-        "я прочитаю, разберу и сохраню.\n\n"
-        "Каждое воскресенье пришлю дайджест всего сохранённого 🗞"
+        "👋 Hey! I'm Listo — your second brain.\n\n"
+        "Drop photos or videos from TikTok/Reels here — "
+        "I'll read the content, summarize it, add tags, and fact-check it.\n\n"
+        "Every Sunday I'll send you a digest of everything you saved 🗞"
     )
 
 
@@ -37,7 +37,7 @@ async def start(message: Message):
 async def handle_photo(message: Message):
     if message.from_user.id != ALLOWED_ID:
         return
-    await message.answer("⚙️ Читаю...")
+    await message.answer("⚙️ Reading...")
 
     photo = message.photo[-1]
     file = await bot.get_file(photo.file_id)
@@ -50,7 +50,7 @@ async def handle_photo(message: Message):
 async def handle_video(message: Message):
     if message.from_user.id != ALLOWED_ID:
         return
-    await message.answer("⚙️ Обрабатываю видео, займёт ~20 секунд...")
+    await message.answer("⚙️ Processing video, ~20 seconds...")
 
     video = message.video or message.document
     file = await bot.get_file(video.file_id)
