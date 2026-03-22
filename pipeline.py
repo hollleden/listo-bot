@@ -149,11 +149,20 @@ def _format(analysis: dict) -> str:
 async def process_media(file_bytes: bytes, media_type: str) -> str:
     try:
         if media_type == "image":
-            raw_content = await asyncio.to_thread(_extract_image, file_bytes)
+            raw_content = await asyncio.wait_for(
+                asyncio.to_thread(_extract_image, file_bytes),
+                timeout=30.0
+            )
         else:
-            raw_content = await asyncio.to_thread(_extract_video, file_bytes)
+            raw_content = await asyncio.wait_for(
+                asyncio.to_thread(_extract_video, file_bytes),
+                timeout=60.0
+            )
 
-        analysis = await asyncio.to_thread(_analyze, raw_content)
+        analysis = await asyncio.wait_for(
+            asyncio.to_thread(_analyze, raw_content),
+            timeout=30.0
+        )
 
         save_entry(
             content_type=analysis.get("content_type", "other"),
@@ -165,6 +174,8 @@ async def process_media(file_bytes: bytes, media_type: str) -> str:
 
         return _format(analysis)
 
+    except asyncio.TimeoutError:
+        return "❌ Timed out — please try again"
     except Exception as e:
         return f"❌ Something went wrong: {str(e)}"
 
@@ -174,11 +185,22 @@ async def process_media_group(images: list[bytes]) -> str:
     try:
         parts = []
         for i, img_bytes in enumerate(images):
-            extracted = await asyncio.to_thread(_extract_image, img_bytes)
-            parts.append(f"[Image {i+1}]: {extracted}")
+            try:
+                extracted = await asyncio.wait_for(
+                    asyncio.to_thread(_extract_image, img_bytes),
+                    timeout=30.0
+                )
+                parts.append(f"[Image {i+1}]: {extracted}")
+            except asyncio.TimeoutError:
+                parts.append(f"[Image {i+1}]: Could not extract (timeout)")
+            except Exception as e:
+                parts.append(f"[Image {i+1}]: Could not extract ({str(e)})")
 
         combined = "\n\n".join(parts)
-        analysis = await asyncio.to_thread(_analyze, combined)
+        analysis = await asyncio.wait_for(
+            asyncio.to_thread(_analyze, combined),
+            timeout=30.0
+        )
 
         save_entry(
             content_type=analysis.get("content_type", "other"),
@@ -190,6 +212,8 @@ async def process_media_group(images: list[bytes]) -> str:
 
         return _format(analysis)
 
+    except asyncio.TimeoutError:
+        return "❌ Timed out — try with fewer images"
     except Exception as e:
         return f"❌ Something went wrong: {str(e)}"
 
