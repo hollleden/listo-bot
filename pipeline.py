@@ -4,10 +4,10 @@ import json
 import tempfile
 import asyncio
 import time
-import google.generativeai as genai
+import google.genai as genai
 from database import save_entry
 
-genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
+client = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
 
 CONTENT_TYPES = {
     "book": "📚 Book",
@@ -22,44 +22,46 @@ CONTENT_TYPES = {
 
 
 def _extract_image(file_bytes: bytes) -> str:
-    model = genai.GenerativeModel("gemini-2.0-flash")
-    image_part = {
-        "mime_type": "image/jpeg",
-        "data": base64.b64encode(file_bytes).decode(),
-    }
+    image_part = genai.types.Part.from_bytes(
+        data=file_bytes,
+        mime_type="image/jpeg",
+    )
     prompt = (
         "Extract ALL text from this screenshot verbatim. "
         "Then describe what is shown in the image."
     )
-    response = model.generate_content([prompt, image_part])
+    response = client.models.generate_content(
+        model="gemini-2.0-flash",
+        contents=[prompt, image_part],
+    )
     return response.text
 
 
 def _extract_video(file_bytes: bytes) -> str:
-    model = genai.GenerativeModel("gemini-2.0-flash")
-
     with tempfile.NamedTemporaryFile(suffix=".mp4", delete=False) as f:
         f.write(file_bytes)
         tmp_path = f.name
 
     try:
-        video_file = genai.upload_file(tmp_path, mime_type="video/mp4")
+        video_file = client.files.upload(path=tmp_path, config={"mime_type": "video/mp4"})
         while video_file.state.name == "PROCESSING":
             time.sleep(3)
-            video_file = genai.get_file(video_file.name)
+            video_file = client.files.get(name=video_file.name)
 
         prompt = (
             "Extract ALL text from subtitles and overlays in this video. "
             "Transcribe all speech. Describe what is happening."
         )
-        response = model.generate_content([prompt, video_file])
+        response = client.models.generate_content(
+            model="gemini-2.0-flash",
+            contents=[prompt, video_file],
+        )
         return response.text
     finally:
         os.unlink(tmp_path)
 
 
 def _analyze(raw_content: str) -> dict:
-    model = genai.GenerativeModel("gemini-2.0-flash")
     prompt = f"""You are an assistant for organizing saved content from TikTok and Reels.
 
 Here is the media content:
@@ -97,7 +99,10 @@ For enrichment fill in based on type:
 
 Return ONLY valid JSON, no markdown, no extra text."""
 
-    response = model.generate_content(prompt)
+    response = client.models.generate_content(
+        model="gemini-2.0-flash",
+        contents=prompt,
+    )
     text = response.text.strip()
     text = text.replace("```json", "").replace("```", "").strip()
     return json.loads(text)
