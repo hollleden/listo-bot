@@ -1,9 +1,9 @@
-import anthropic
 import os
 from datetime import datetime
 from database import get_entries_since
+import google.generativeai as genai
 
-claude = anthropic.Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
+genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
 
 CONTENT_TYPES = {
     "book": "📚 Books",
@@ -46,6 +46,7 @@ def _build_digest(entries, digest_type: str) -> str:
 
 
 def _get_quarterly_insight(summaries: list) -> str:
+    model = genai.GenerativeModel("gemini-2.0-flash")
     prompt = f"""Here is what the person saved over the last 3 months:
 {chr(10).join(summaries[:30])}
 
@@ -53,12 +54,8 @@ Write 2-3 sentences — what themes and patterns stand out?
 What does this say about their interests right now? 
 Be warm and friendly."""
 
-    response = claude.messages.create(
-        model="claude-sonnet-4-20250514",
-        max_tokens=300,
-        messages=[{"role": "user", "content": prompt}],
-    )
-    return response.content[0].text
+    response = model.generate_content(prompt)
+    return response.text
 
 
 async def send_weekly_digest(bot, chat_id):
