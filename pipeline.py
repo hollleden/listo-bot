@@ -5,9 +5,13 @@ import tempfile
 import asyncio
 import time
 import google.genai as genai
+from google.genai import types as genai_types
 from database import save_entry
 
-client = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
+client = genai.Client(
+    api_key=os.getenv("GEMINI_API_KEY"),
+    http_options=genai_types.HttpOptions(api_version="v1"),
+)
 
 CONTENT_TYPES = {
     "book": "📚 Book",
@@ -31,7 +35,7 @@ def _extract_image(file_bytes: bytes) -> str:
         "Then describe what is shown in the image."
     )
     response = client.models.generate_content(
-        model="gemini-1.5-flash",
+        model="gemini-2.5-flash-lite-latest",
         contents=[prompt, image_part],
     )
     return response.text
@@ -53,7 +57,7 @@ def _extract_video(file_bytes: bytes) -> str:
             "Transcribe all speech. Describe what is happening."
         )
         response = client.models.generate_content(
-            model="gemini-1.5-flash",
+            model="gemini-2.5-flash-lite-latest",
             contents=[prompt, video_file],
         )
         return response.text
@@ -100,7 +104,7 @@ For enrichment fill in based on type:
 Return ONLY valid JSON, no markdown, no extra text."""
 
     response = client.models.generate_content(
-        model="gemini-1.5-flash",
+        model="gemini-2.5-flash-lite-latest",
         contents=prompt,
     )
     text = response.text.strip()
