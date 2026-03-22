@@ -59,7 +59,7 @@ async def flush_media_group(media_group_id: str, chat_id: int):
         all_bytes.append(file_bytes.read())
 
     result = await process_media_group(all_bytes)
-    await bot.send_message(chat_id=chat_id, text=result, parse_mode="Markdown")
+    await bot.send_message(chat_id=chat_id, text=result)
 
 
 @dp.message(F.photo)
@@ -87,7 +87,7 @@ async def handle_photo(message: Message):
     file = await bot.get_file(photo.file_id)
     file_bytes = await bot.download_file(file.file_path)
     result = await process_media(file_bytes.read(), media_type="image")
-    await message.answer(result, parse_mode="Markdown")
+    await message.answer(result)
 
 
 @dp.message(F.video | F.document)
@@ -99,7 +99,7 @@ async def handle_video(message: Message):
     file = await bot.get_file(video.file_id)
     file_bytes = await bot.download_file(file.file_path)
     result = await process_media(file_bytes.read(), media_type="video")
-    await message.answer(result, parse_mode="Markdown")
+    await message.answer(result)
 
 
 @dp.message(F.text | F.caption)
@@ -111,7 +111,7 @@ async def handle_text(message: Message):
         return
     await message.answer("⚙️ Reading...")
     result = await process_text(text)
-    await message.answer(result, parse_mode="Markdown")
+    await message.answer(result)
 
 
 async def main():
