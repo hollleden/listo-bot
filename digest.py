@@ -6,14 +6,14 @@ from database import get_entries_since
 claude = anthropic.Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
 
 CONTENT_TYPES = {
-    "book": "📚 Книги",
-    "place": "🌍 Места",
-    "recipe": "🍽️ Рецепты",
-    "philosophy": "🧠 Философия",
-    "spanish": "💃 Испанский",
-    "film": "🎬 Фильмы",
-    "health": "💚 Здоровье",
-    "other": "📌 Другое",
+    "book": "📚 Books",
+    "place": "🌍 Places",
+    "recipe": "🍽️ Recipes",
+    "philosophy": "🧠 Philosophy",
+    "spanish": "💃 Spanish",
+    "film": "🎬 Films",
+    "health": "💚 Health",
+    "other": "📌 Other",
 }
 
 
@@ -25,33 +25,33 @@ def _build_digest(entries, digest_type: str) -> str:
         grouped.setdefault(ct, []).append(summary)
 
     if digest_type == "weekly":
-        header = f"🗞 *Listo — дайджест недели*\n_{datetime.now().strftime('%d.%m.%Y')}_\n\n"
+        header = f"🗞 *Listo — weekly digest*\n_{datetime.now().strftime('%d.%m.%Y')}_\n\n"
     else:
-        header = f"🌟 *Listo — квартальный обзор*\n_{datetime.now().strftime('%d.%m.%Y')}_\n\n"
+        header = f"🌟 *Listo — quarterly review*\n_{datetime.now().strftime('%d.%m.%Y')}_\n\n"
 
     body = ""
     for ct, summaries in grouped.items():
-        label = CONTENT_TYPES.get(ct, "📌 Другое")
-        body += f"*{label}* — {len(summaries)} шт.\n"
-        for s in summaries[:5]:  # максимум 5 на категорию
+        label = CONTENT_TYPES.get(ct, "📌 Other")
+        body += f"*{label}* — {len(summaries)} saved\n"
+        for s in summaries[:5]:
             body += f"• {s}\n"
         body += "\n"
 
     if digest_type == "quarterly":
         all_summaries = [e[1] for e in entries]
         insight = _get_quarterly_insight(all_summaries)
-        body += f"💡 *Инсайт квартала*\n{insight}"
+        body += f"💡 *Quarterly insight*\n{insight}"
 
     return header + body
 
 
 def _get_quarterly_insight(summaries: list) -> str:
-    prompt = f"""Вот что человек сохранял последние 3 месяца:
+    prompt = f"""Here is what the person saved over the last 3 months:
 {chr(10).join(summaries[:30])}
 
-Напиши 2-3 предложения — какие темы и паттерны прослеживаются? 
-Что это говорит о её интересах прямо сейчас? 
-Пиши тепло, по-дружески, обращайся на "ты"."""
+Write 2-3 sentences — what themes and patterns stand out? 
+What does this say about their interests right now? 
+Be warm and friendly."""
 
     response = claude.messages.create(
         model="claude-sonnet-4-20250514",
@@ -64,7 +64,7 @@ def _get_quarterly_insight(summaries: list) -> str:
 async def send_weekly_digest(bot, chat_id):
     entries = get_entries_since(7)
     if not entries:
-        await bot.send_message(chat_id=chat_id, text="🗞 На этой неделе ничего не сохранено!")
+        await bot.send_message(chat_id=chat_id, text="🗞 Nothing saved this week!")
         return
     digest = _build_digest(entries, "weekly")
     await bot.send_message(chat_id=chat_id, text=digest, parse_mode="Markdown")
