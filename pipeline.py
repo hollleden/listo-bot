@@ -167,3 +167,47 @@ async def process_media(file_bytes: bytes, media_type: str) -> str:
 
     except Exception as e:
         return f"❌ Something went wrong: {str(e)}"
+
+
+async def process_media_group(images: list[bytes]) -> str:
+    """Process multiple images from one post together."""
+    try:
+        parts = []
+        for i, img_bytes in enumerate(images):
+            extracted = await asyncio.to_thread(_extract_image, img_bytes)
+            parts.append(f"[Image {i+1}]: {extracted}")
+
+        combined = "\n\n".join(parts)
+        analysis = await asyncio.to_thread(_analyze, combined)
+
+        save_entry(
+            content_type=analysis.get("content_type", "other"),
+            summary=analysis.get("summary", ""),
+            tags=analysis.get("tags", []),
+            folder=analysis.get("folder", "Personal"),
+            raw_content=combined,
+        )
+
+        return _format(analysis)
+
+    except Exception as e:
+        return f"❌ Something went wrong: {str(e)}"
+
+
+async def process_text(text: str) -> str:
+    """Process a forwarded text post."""
+    try:
+        analysis = await asyncio.to_thread(_analyze, text)
+
+        save_entry(
+            content_type=analysis.get("content_type", "other"),
+            summary=analysis.get("summary", ""),
+            tags=analysis.get("tags", []),
+            folder=analysis.get("folder", "Personal"),
+            raw_content=text,
+        )
+
+        return _format(analysis)
+
+    except Exception as e:
+        return f"❌ Something went wrong: {str(e)}"
