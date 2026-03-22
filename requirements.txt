@@ -1,5 +1,4 @@
 aiogram
-anthropic
 google-generativeai
 apscheduler
 python-dotenv
