@@ -10,6 +10,9 @@ from database import save_entry
 client = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
 MODEL = "gemini-2.5-flash-lite"
 
+# Only 1 request at a time to stay within 15 RPM free tier
+_api_semaphore = asyncio.Semaphore(1)
+
 CONTENT_TYPES = {
     "book": "📚 Book",
     "place": "🌍 Place",
@@ -126,68 +129,63 @@ def _format(analysis: dict) -> str:
 
 
 async def process_media(file_bytes: bytes, media_type: str) -> str:
-    try:
-        if media_type == "image":
-            raw = await asyncio.wait_for(asyncio.to_thread(_extract_image, file_bytes), timeout=60.0)
-        else:
-            raw = await asyncio.wait_for(asyncio.to_thread(_extract_video, file_bytes), timeout=120.0)
-
-        analysis = await asyncio.wait_for(asyncio.to_thread(_analyze, raw), timeout=60.0)
-        if isinstance(analysis, list):
-            analysis = analysis[0] if analysis else {}
-        save_entry(analysis.get("content_type", "other"), analysis.get("summary", ""),
-                   analysis.get("tags", []), analysis.get("folder", "Personal"), raw)
-        return _format(analysis)
-    except asyncio.TimeoutError:
-        return "Timed out — please try again"
-    except Exception as e:
-        return f"Something went wrong: {str(e)}"
+    async with _api_semaphore:
+        try:
+            if media_type == "image":
+                raw = await asyncio.wait_for(asyncio.to_thread(_extract_image, file_bytes), timeout=60.0)
+            else:
+                raw = await asyncio.wait_for(asyncio.to_thread(_extract_video, file_bytes), timeout=120.0)
+            analysis = await asyncio.wait_for(asyncio.to_thread(_analyze, raw), timeout=60.0)
+            if isinstance(analysis, list):
+                analysis = analysis[0] if analysis else {}
+            save_entry(analysis.get("content_type", "other"), analysis.get("summary", ""),
+                       analysis.get("tags", []), analysis.get("folder", "Personal"), raw)
+            return _format(analysis)
+        except asyncio.TimeoutError:
+            return "Timed out — please try again"
+        except Exception as e:
+            return f"Something went wrong: {str(e)}"
 
 
 async def process_media_group(images: list[bytes]) -> str:
-    try:
-        # Each image = 1 API call, plus 1 for analysis = total len+1 calls
-        # Free tier limit: 10 RPM. If too many images, ask to wait.
-        total_calls = len(images) + 1
-        if total_calls > 9:
-            wait_minutes = (total_calls // 9) + 1
-            return f"Too many images at once ({len(images)}). Free tier allows ~8 images per batch. Please wait {wait_minutes} minute(s) and try again, or send fewer images."
+    async with _api_semaphore:
+        try:
+            total_calls = len(images) + 1
+            if total_calls > 9:
+                wait_minutes = (total_calls // 9) + 1
+                return f"Too many images at once ({len(images)}). Please wait {wait_minutes} minute(s) and try again, or send fewer images."
 
-        parts = []
-        for i, img_bytes in enumerate(images):
-            try:
-                extracted = await asyncio.wait_for(
-                    asyncio.to_thread(_extract_image, img_bytes), timeout=60.0
-                )
-                parts.append(f"[Image {i+1}]: {extracted}")
-            except Exception as e:
-                parts.append(f"[Image {i+1}]: Could not extract ({str(e)})")
+            parts = []
+            for i, img_bytes in enumerate(images):
+                try:
+                    extracted = await asyncio.wait_for(
+                        asyncio.to_thread(_extract_image, img_bytes), timeout=60.0
+                    )
+                    parts.append(f"[Image {i+1}]: {extracted}")
+                except Exception as e:
+                    parts.append(f"[Image {i+1}]: Could not extract ({str(e)})")
 
-        combined = "\n\n".join(parts)
-        analysis = await asyncio.wait_for(
-            asyncio.to_thread(_analyze, combined), timeout=60.0
-        )
-
-        if isinstance(analysis, list):
-            analysis = analysis[0] if analysis else {}
-
-        save_entry(analysis.get("content_type", "other"), analysis.get("summary", ""),
-                   analysis.get("tags", []), analysis.get("folder", "Personal"), combined)
-        return _format(analysis)
-
-    except asyncio.TimeoutError:
-        return "Timed out — please try again"
-    except Exception as e:
-        return f"Something went wrong: {str(e)}"
+            combined = "\n\n".join(parts)
+            analysis = await asyncio.wait_for(asyncio.to_thread(_analyze, combined), timeout=60.0)
+            if isinstance(analysis, list):
+                analysis = analysis[0] if analysis else {}
+            save_entry(analysis.get("content_type", "other"), analysis.get("summary", ""),
+                       analysis.get("tags", []), analysis.get("folder", "Personal"), combined)
+            return _format(analysis)
+        except asyncio.TimeoutError:
+            return "Timed out — please try again"
+        except Exception as e:
+            return f"Something went wrong: {str(e)}"
 
 
 async def process_text(text: str) -> str:
-    try:
-        analysis = await asyncio.wait_for(asyncio.to_thread(_analyze, text), timeout=60.0)
-        if isinstance(analysis, list):
-            analysis = analysis[0] if analysis else {}
-        save_entry(analysis.get("content_type", "other"), analysis.get("summary", ""),
-                   analysis.get("tags", []), analysis.get("folder", "Personal"), text)
-        return _format(analysis)
-    except Exception as e:
-        return f"Something went wrong: {str(e)}"
+    async with _api_semaphore:
+        try:
+            analysis = await asyncio.wait_for(asyncio.to_thread(_analyze, text), timeout=60.0)
+            if isinstance(analysis, list):
+                analysis = analysis[0] if analysis else {}
+            save_entry(analysis.get("content_type", "other"), analysis.get("summary", ""),
+                       analysis.get("tags", []), analysis.get("folder", "Personal"), text)
+            return _format(analysis)
+        except Exception as e:
+            return f"Something went wrong: {str(e)}"
