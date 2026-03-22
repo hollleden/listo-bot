@@ -5,11 +5,9 @@ import tempfile
 import asyncio
 import time
 import google.generativeai as genai
-import anthropic
 from database import save_entry
 
 genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
-claude = anthropic.Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
 
 CONTENT_TYPES = {
     "book": "📚 Book",
@@ -61,6 +59,7 @@ def _extract_video(file_bytes: bytes) -> str:
 
 
 def _analyze(raw_content: str) -> dict:
+    model = genai.GenerativeModel("gemini-2.0-flash")
     prompt = f"""You are an assistant for organizing saved content from TikTok and Reels.
 
 Here is the media content:
@@ -98,14 +97,8 @@ For enrichment fill in based on type:
 
 Return ONLY valid JSON, no markdown, no extra text."""
 
-    response = claude.messages.create(
-        model="claude-sonnet-4-20250514",
-        max_tokens=1500,
-        messages=[{"role": "user", "content": prompt}],
-    )
-
-    text = response.content[0].text.strip()
-    # На случай если Claude всё же добавил markdown блоки
+    response = model.generate_content(prompt)
+    text = response.text.strip()
     text = text.replace("```json", "").replace("```", "").strip()
     return json.loads(text)
 
