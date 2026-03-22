@@ -31,7 +31,7 @@ def _extract_image(file_bytes: bytes) -> str:
         "Then describe what is shown in the image."
     )
     response = client.models.generate_content(
-        model="gemini-2.0-flash",
+        model="gemini-1.5-flash",
         contents=[prompt, image_part],
     )
     return response.text
@@ -53,7 +53,7 @@ def _extract_video(file_bytes: bytes) -> str:
             "Transcribe all speech. Describe what is happening."
         )
         response = client.models.generate_content(
-            model="gemini-2.0-flash",
+            model="gemini-1.5-flash",
             contents=[prompt, video_file],
         )
         return response.text
@@ -100,7 +100,7 @@ For enrichment fill in based on type:
 Return ONLY valid JSON, no markdown, no extra text."""
 
     response = client.models.generate_content(
-        model="gemini-2.0-flash",
+        model="gemini-1.5-flash",
         contents=prompt,
     )
     text = response.text.strip()
