@@ -113,7 +113,7 @@ def _format(analysis: dict) -> str:
     # Fact-check
     fc_lines = []
     for fc in analysis.get("fact_check", []):
-        fc_lines.append(f"{fc['verdict']} _{fc['claim']}_ — {fc['note']}")
+        fc_lines.append(f"{fc['verdict']} {fc['claim']} — {fc['note']}")
     fact_check_text = "\n".join(fc_lines) if fc_lines else "🔍 No specific facts to verify"
 
     # Обогащение
@@ -128,13 +128,13 @@ def _format(analysis: dict) -> str:
 
     result = (
         f"{type_label} · 📁 {folder}\n\n"
-        f"📝 *Summary*\n{summary}\n\n"
+        f"📝 Summary\n{summary}\n\n"
         f"🏷 {tags}\n\n"
-        f"✅ *Fact-check*\n{fact_check_text}"
+        f"✅ Fact-check\n{fact_check_text}"
     )
 
     if enrich_text:
-        result += f"\n\n🔎 *Details*\n{enrich_text}"
+        result += f"\n\n🔎 Details\n{enrich_text}"
 
     return result
 
@@ -181,7 +181,7 @@ async def process_media_group(images: list[bytes]) -> str:
             try:
                 extracted = await asyncio.wait_for(
                     asyncio.to_thread(_extract_image, img_bytes),
-                    timeout=30.0
+                    timeout=60.0
                 )
                 parts.append(f"[Image {i+1}]: {extracted}")
             except asyncio.TimeoutError:
@@ -192,7 +192,7 @@ async def process_media_group(images: list[bytes]) -> str:
         combined = "\n\n".join(parts)
         analysis = await asyncio.wait_for(
             asyncio.to_thread(_analyze, combined),
-            timeout=30.0
+            timeout=60.0
         )
 
         save_entry(
