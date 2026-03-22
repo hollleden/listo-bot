@@ -55,7 +55,7 @@ What does this say about their interests right now?
 Be warm and friendly."""
 
     response = client.models.generate_content(
-        model="gemini-2.0-flash-latest",
+        model="gemini-2.0-flash-lite-latest",
         contents=prompt,
     )
     return response.text
