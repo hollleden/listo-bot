@@ -4,7 +4,7 @@ import os
 from collections import defaultdict
 from aiogram import Bot, Dispatcher, F
 from aiogram.filters import CommandStart
-from aiogram.types import Message
+from aiogram.types import Message, MessageOriginUser, MessageOriginChannel, MessageOriginHiddenUser
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from dotenv import load_dotenv
 from pipeline import process_media, process_text, process_media_group
@@ -24,6 +24,23 @@ dp = Dispatcher()
 # Buffer for media groups
 media_group_buffer = defaultdict(list)
 media_group_tasks = {}
+
+
+def _forward_context(message: Message) -> str:
+    """Extract source context from forwarded messages to prepend to content."""
+    if not message.forward_origin:
+        return ""
+    origin = message.forward_origin
+    if isinstance(origin, MessageOriginChannel):
+        name = origin.chat.title or "unknown channel"
+        return f"[Forwarded from channel: {name}]\n"
+    elif isinstance(origin, MessageOriginUser):
+        name = origin.sender_user.full_name or "unknown user"
+        return f"[Forwarded from: {name}]\n"
+    elif isinstance(origin, MessageOriginHiddenUser):
+        name = origin.sender_user_name or "hidden user"
+        return f"[Forwarded from: {name}]\n"
+    return "[Forwarded post]\n"
 
 
 @dp.message(CommandStart())
@@ -50,7 +67,12 @@ async def flush_media_group(media_group_id: str, chat_id: int):
 
     await bot.send_message(chat_id=chat_id, text=f"⚙️ Reading {len(messages)} images together...")
 
-    # Download all images
+    # Caption from first message that has one
+    raw_caption = next((m.caption for m in messages if m.caption), "")
+    # Prepend forward context if applicable
+    forward_prefix = _forward_context(messages[0])
+    caption = f"{forward_prefix}{raw_caption}".strip()
+
     all_bytes = []
     for msg in messages:
         photo = msg.photo[-1]
@@ -58,7 +80,7 @@ async def flush_media_group(media_group_id: str, chat_id: int):
         file_bytes = await bot.download_file(file.file_path)
         all_bytes.append(file_bytes.read())
 
-    result = await process_media_group(all_bytes)
+    result = await process_media_group(all_bytes, caption=caption)
     await bot.send_message(chat_id=chat_id, text=result)
 
 
@@ -67,26 +89,25 @@ async def handle_photo(message: Message):
     if message.from_user.id != ALLOWED_ID:
         return
 
-    # Part of a media group?
     if message.media_group_id:
         media_group_buffer[message.media_group_id].append(message)
-
-        # Cancel previous flush task and restart timer
         if message.media_group_id in media_group_tasks:
             media_group_tasks[message.media_group_id].cancel()
-
         task = asyncio.create_task(
             flush_media_group(message.media_group_id, message.chat.id)
         )
         media_group_tasks[message.media_group_id] = task
         return
 
-    # Single photo
     await message.answer("⚙️ Reading...")
     photo = message.photo[-1]
     file = await bot.get_file(photo.file_id)
     file_bytes = await bot.download_file(file.file_path)
-    result = await process_media(file_bytes.read(), media_type="image")
+
+    forward_prefix = _forward_context(message)
+    caption = f"{forward_prefix}{message.caption or ''}".strip()
+
+    result = await process_media(file_bytes.read(), media_type="image", caption=caption)
     await message.answer(result)
 
 
@@ -98,19 +119,27 @@ async def handle_video(message: Message):
     video = message.video or message.document
     file = await bot.get_file(video.file_id)
     file_bytes = await bot.download_file(file.file_path)
-    result = await process_media(file_bytes.read(), media_type="video")
+
+    forward_prefix = _forward_context(message)
+    caption = f"{forward_prefix}{message.caption or ''}".strip()
+
+    result = await process_media(file_bytes.read(), media_type="video", caption=caption)
     await message.answer(result)
 
 
-@dp.message(F.text | F.caption)
+@dp.message(F.text)  # caption removed — handled inside photo/video handlers
 async def handle_text(message: Message):
     if message.from_user.id != ALLOWED_ID:
         return
-    text = message.text or message.caption
+    text = message.text
     if not text or len(text) < 20:
         return
+
+    forward_prefix = _forward_context(message)
+    full_text = f"{forward_prefix}{text}".strip()
+
     await message.answer("⚙️ Reading...")
-    result = await process_text(text)
+    result = await process_text(full_text)
     await message.answer(result)
 
 
