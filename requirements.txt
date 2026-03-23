@@ -2,4 +2,4 @@ aiogram
 google-genai
 apscheduler
 python-dotenv
-duckduckgo-search
+ddgs
