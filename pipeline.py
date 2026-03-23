@@ -94,7 +94,8 @@ Return a JSON with these fields:
   "youtube_videos": [],
   "is_exhibition": false,
   "exhibition_name": "",
-  "exhibition_venue": ""
+  "exhibition_venue": "",
+  "exhibition_url": ""
 }}
 
 Folder rules:
@@ -108,7 +109,8 @@ Folder rules:
 
 Enrichment by type — extract from content only, do NOT invent external data like ratings or URLs:
 - book: {{"title": "", "author": "", "year": "", "genre": ""}}
-- place: {{"place_name": "", "city": "", "country": "", "best_season": "", "approx_budget": ""}}
+- place: {{"places": [{{"name": "", "city": "", "country": ""}}], "best_season": "", "approx_budget": ""}}
+  If multiple places are mentioned, list ALL of them in "places". Always use a list, even for a single place.
 - recipe: {{"cook_time": "", "difficulty": "easy|medium|hard", "key_ingredients": [], "dietary": ""}}
 - philosophy: {{"school": "", "key_thinker": "", "opposite_view": ""}}
 - spanish: {{"level": "A1|A2|B1|B2|C1", "key_words": []}}
@@ -120,6 +122,7 @@ IMPORTANT for recipes: convert ALL measurements to metric. Use grams, ml, °C on
 youtube_videos: list any YouTube video titles mentioned or visible in the content. Empty array if none.
 is_exhibition: true if content is about an art exhibition, museum show, gallery, or cultural event with a venue.
 exhibition_name / exhibition_venue: fill if is_exhibition is true.
+exhibition_url: if the post contains a direct URL to the event/exhibition website, put it here. Otherwise leave empty.
 
 Return ONLY valid JSON. No markdown. No extra text."""
 
@@ -162,11 +165,27 @@ def _enrich(analysis: dict) -> dict:
                 if imdb.get("rating"):
                     enrich["imdb_rating"] = imdb["rating"]
 
-    # Places
+    # Places — generate a Maps link for each place mentioned
     elif ct == "place":
-        place_name = enrich.get("place_name") or enrich.get("city", "")
-        if place_name:
-            links["google_maps"] = google_maps_link(place_name)
+        places = enrich.get("places", [])
+        # Fallback: old schema or plain string
+        if not places:
+            fallback = enrich.get("place_name") or enrich.get("city", "")
+            if fallback:
+                places = [{"name": str(fallback)}]
+        maps_links = []
+        for p in places:
+            if isinstance(p, dict):
+                name = p.get("name") or p.get("city", "")
+            else:
+                name = str(p)
+            name = name.strip() if name else ""
+            if name:
+                url = google_maps_link(name)
+                if url:
+                    maps_links.append({"name": name, "url": url})
+        if maps_links:
+            links["google_maps"] = maps_links
 
     # YouTube videos
     youtube_titles = analysis.get("youtube_videos", [])
@@ -193,7 +212,8 @@ def _enrich(analysis: dict) -> dict:
         ex_name = analysis.get("exhibition_name", "")
         ex_venue = analysis.get("exhibition_venue", "")
         if ex_name:
-            ex_result = search_exhibition(ex_name, ex_venue)
+            ex_url = analysis.get("exhibition_url", "")
+            ex_result = search_exhibition(ex_name, ex_venue, direct_url=ex_url)
             if ex_result:
                 analysis["exhibition_link"] = ex_result["url"]
                 analysis["exhibition_snippet"] = ex_result.get("snippet", "")
@@ -246,7 +266,12 @@ def _format(analysis: dict) -> str:
         rating_str = f" · {rating}/10" if rating else ""
         link_lines.append(f"🎬 IMDb{rating_str}: {links['imdb']}")
     if "google_maps" in links:
-        link_lines.append(f"📍 Maps: {links['google_maps']}")
+        maps_data = links["google_maps"]
+        if isinstance(maps_data, list):
+            for m in maps_data:
+                link_lines.append(f"📍 {m['name']}: {m['url']}")
+        else:
+            link_lines.append(f"📍 Maps: {maps_data}")
 
     # Exhibition
     if analysis.get("is_exhibition") and analysis.get("exhibition_link"):
