@@ -6,6 +6,14 @@ import time
 from google import genai
 from google.genai import types
 from database import save_entry
+from enrichment import (
+    search_goodreads,
+    search_press_reviews,
+    search_imdb,
+    search_exhibition,
+    search_youtube,
+    google_maps_link,
+)
 
 client = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
 MODEL = "gemini-2.5-flash-lite"
@@ -24,6 +32,10 @@ CONTENT_TYPES = {
     "other": "📌 Other",
 }
 
+
+# ---------------------------------------------------------------------------
+# Extraction
+# ---------------------------------------------------------------------------
 
 def _extract_image(file_bytes: bytes) -> str:
     response = client.models.generate_content(
@@ -59,6 +71,10 @@ def _extract_video(file_bytes: bytes) -> str:
         os.unlink(tmp_path)
 
 
+# ---------------------------------------------------------------------------
+# Step 1: Analyze — Gemini reads content, returns structured JSON
+# ---------------------------------------------------------------------------
+
 def _analyze(raw_content: str) -> dict:
     prompt = f"""You are an assistant for organizing saved content from TikTok, Reels, and Telegram.
 
@@ -74,7 +90,11 @@ Return a JSON with these fields:
   "fact_check": [
     {{"claim": "factual claim", "verdict": "True|Disputed|False|Cannot verify", "note": "explanation"}}
   ],
-  "enrichment": {{}}
+  "enrichment": {{}},
+  "youtube_videos": [],
+  "is_exhibition": false,
+  "exhibition_name": "",
+  "exhibition_venue": ""
 }}
 
 Folder rules:
@@ -86,14 +106,20 @@ Folder rules:
 - Work -> Trabajo
 - Other -> Personal
 
-Enrichment by type:
-- book: {{"author": "", "year": "", "genre": "", "goodreads_rating": ""}}
-- place: {{"country": "", "city": "", "best_season": "", "approx_budget": ""}}
+Enrichment by type — extract from content only, do NOT invent external data like ratings or URLs:
+- book: {{"title": "", "author": "", "year": "", "genre": ""}}
+- place: {{"place_name": "", "city": "", "country": "", "best_season": "", "approx_budget": ""}}
 - recipe: {{"cook_time": "", "difficulty": "easy|medium|hard", "key_ingredients": [], "dietary": ""}}
 - philosophy: {{"school": "", "key_thinker": "", "opposite_view": ""}}
 - spanish: {{"level": "A1|A2|B1|B2|C1", "key_words": []}}
-- film: {{"year": "", "genre": "", "imdb_rating": "", "where_to_watch": ""}}
+- film: {{"title": "", "year": "", "genre": ""}}
 - health: {{"topic": "", "evidence_level": "scientific|popular|anecdotal"}}
+
+IMPORTANT for recipes: convert ALL measurements to metric. Use grams, ml, °C only. Never output cups, oz, °F, tbsp, tsp as final units.
+
+youtube_videos: list any YouTube video titles mentioned or visible in the content. Empty array if none.
+is_exhibition: true if content is about an art exhibition, museum show, gallery, or cultural event with a venue.
+exhibition_name / exhibition_venue: fill if is_exhibition is true.
 
 Return ONLY valid JSON. No markdown. No extra text."""
 
@@ -101,6 +127,85 @@ Return ONLY valid JSON. No markdown. No extra text."""
     text = response.text.strip().replace("```json", "").replace("```", "").strip()
     return json.loads(text)
 
+
+# ---------------------------------------------------------------------------
+# Step 2: Enrich — real web lookups based on type and detected entities
+# ---------------------------------------------------------------------------
+
+def _enrich(analysis: dict) -> dict:
+    ct = analysis.get("content_type", "other")
+    enrich = analysis.get("enrichment", {})
+    links = {}
+
+    # Books
+    if ct == "book":
+        title = enrich.get("title", "")
+        author = enrich.get("author", "")
+        if title:
+            gr = search_goodreads(title, author)
+            if gr:
+                links["goodreads"] = gr["url"]
+                if gr.get("rating"):
+                    enrich["goodreads_rating"] = gr["rating"]
+            reviews = search_press_reviews(title, author)
+            if reviews:
+                links["press_reviews"] = reviews
+
+    # Films
+    elif ct == "film":
+        title = enrich.get("title", "")
+        year = enrich.get("year", "")
+        if title:
+            imdb = search_imdb(title, year)
+            if imdb:
+                links["imdb"] = imdb["url"]
+                if imdb.get("rating"):
+                    enrich["imdb_rating"] = imdb["rating"]
+
+    # Places
+    elif ct == "place":
+        place_name = enrich.get("place_name") or enrich.get("city", "")
+        if place_name:
+            links["google_maps"] = google_maps_link(place_name)
+
+    # YouTube videos
+    youtube_titles = analysis.get("youtube_videos", [])
+    if youtube_titles:
+        found_videos = []
+        for title in youtube_titles[:5]:
+            result = search_youtube(title)
+            if result and result.get("url"):
+                found_videos.append({
+                    "title": result.get("title", title),
+                    "url": result["url"],
+                    "confident": result.get("confident", False),
+                })
+            else:
+                found_videos.append({
+                    "title": title,
+                    "url": None,
+                    "confident": False,
+                })
+        analysis["found_youtube"] = found_videos
+
+    # Exhibition / event
+    if analysis.get("is_exhibition"):
+        ex_name = analysis.get("exhibition_name", "")
+        ex_venue = analysis.get("exhibition_venue", "")
+        if ex_name:
+            ex_result = search_exhibition(ex_name, ex_venue)
+            if ex_result:
+                analysis["exhibition_link"] = ex_result["url"]
+                analysis["exhibition_snippet"] = ex_result.get("snippet", "")
+
+    analysis["enrichment"] = enrich
+    analysis["links"] = links
+    return analysis
+
+
+# ---------------------------------------------------------------------------
+# Format
+# ---------------------------------------------------------------------------
 
 def _format(analysis: dict) -> str:
     ct = analysis.get("content_type", "other")
@@ -111,43 +216,118 @@ def _format(analysis: dict) -> str:
 
     fc_lines = []
     for fc in analysis.get("fact_check", []):
-        fc_lines.append(f"- {fc.get('verdict', '')}: {fc.get('claim', '')} — {fc.get('note', '')}")
+        verdict = fc.get("verdict", "")
+        claim = fc.get("claim", "")
+        note = fc.get("note", "")
+        fc_lines.append(f"- {verdict}: {claim} — {note}")
     fact_check_text = "\n".join(fc_lines) if fc_lines else "No specific facts to verify"
 
     enrich = analysis.get("enrichment", {})
     enrich_lines = [
         f"- {k}: {', '.join(v) if isinstance(v, list) else v}"
         for k, v in enrich.items()
-        if v and v != "" and v != []
+        if v and v != "" and v != [] and k not in ("goodreads_rating", "imdb_rating")
     ]
     enrich_text = "\n".join(enrich_lines)
+
+    # Links
+    links = analysis.get("links", {})
+    link_lines = []
+
+    if "goodreads" in links:
+        rating = enrich.get("goodreads_rating", "")
+        rating_str = f" · {rating}/5" if rating else ""
+        link_lines.append(f"📖 Goodreads{rating_str}: {links['goodreads']}")
+    if "press_reviews" in links:
+        for url in links["press_reviews"]:
+            link_lines.append(f"📰 Press: {url}")
+    if "imdb" in links:
+        rating = enrich.get("imdb_rating", "")
+        rating_str = f" · {rating}/10" if rating else ""
+        link_lines.append(f"🎬 IMDb{rating_str}: {links['imdb']}")
+    if "google_maps" in links:
+        link_lines.append(f"📍 Maps: {links['google_maps']}")
+
+    # Exhibition
+    if analysis.get("is_exhibition") and analysis.get("exhibition_link"):
+        snippet = analysis.get("exhibition_snippet", "")
+        dates_note = " *(даты не подтверждены)*" if not snippet else ""
+        link_lines.append(f"🎨 Exhibition{dates_note}: {analysis['exhibition_link']}")
+        if snippet:
+            link_lines.append(f"   ↳ {snippet[:120]}")
+
+    # YouTube
+    youtube_videos = analysis.get("found_youtube", [])
+    yt_lines = []
+    for v in youtube_videos:
+        if v.get("url"):
+            conf_note = " *(возможно, это оно)*" if not v.get("confident") else ""
+            yt_lines.append(f"🎥 {v['title']}{conf_note}\n→ {v['url']}")
+        else:
+            yt_lines.append(f"🎥 {v['title']} — не найдено на YouTube")
 
     result = f"{type_label} | 📁 {folder}\n\n📝 Summary\n{summary}\n\n🏷 {tags}\n\nFact-check\n{fact_check_text}"
     if enrich_text:
         result += f"\n\nDetails\n{enrich_text}"
+    if link_lines:
+        result += f"\n\n🔗 Links\n" + "\n".join(link_lines)
+    if yt_lines:
+        result += f"\n\n🎬 YouTube\n" + "\n\n".join(yt_lines)
+
     return result
 
 
-async def process_media(file_bytes: bytes, media_type: str) -> str:
+# ---------------------------------------------------------------------------
+# Pipeline runner
+# ---------------------------------------------------------------------------
+
+async def _run_pipeline(raw_content: str) -> str:
+    analysis = await asyncio.wait_for(asyncio.to_thread(_analyze, raw_content), timeout=60.0)
+    if isinstance(analysis, list):
+        analysis = analysis[0] if analysis else {}
+    # Enrich runs outside the semaphore implicitly since it's IO-bound web search
+    analysis = await asyncio.wait_for(asyncio.to_thread(_enrich, analysis), timeout=60.0)
+    formatted = _format(analysis)
+    # Save only after successful format
+    save_entry(
+        analysis.get("content_type", "other"),
+        analysis.get("summary", ""),
+        analysis.get("tags", []),
+        analysis.get("folder", "Personal"),
+        raw_content,
+    )
+    return formatted
+
+
+# ---------------------------------------------------------------------------
+# Public API
+# ---------------------------------------------------------------------------
+
+async def process_media(file_bytes: bytes, media_type: str, caption: str = "") -> str:
     async with _api_semaphore:
         try:
             if media_type == "image":
-                raw = await asyncio.wait_for(asyncio.to_thread(_extract_image, file_bytes), timeout=60.0)
+                raw_media = await asyncio.wait_for(
+                    asyncio.to_thread(_extract_image, file_bytes), timeout=60.0
+                )
             else:
-                raw = await asyncio.wait_for(asyncio.to_thread(_extract_video, file_bytes), timeout=120.0)
-            analysis = await asyncio.wait_for(asyncio.to_thread(_analyze, raw), timeout=60.0)
-            if isinstance(analysis, list):
-                analysis = analysis[0] if analysis else {}
-            save_entry(analysis.get("content_type", "other"), analysis.get("summary", ""),
-                       analysis.get("tags", []), analysis.get("folder", "Personal"), raw)
-            return _format(analysis)
+                raw_media = await asyncio.wait_for(
+                    asyncio.to_thread(_extract_video, file_bytes), timeout=120.0
+                )
+
+            if caption:
+                raw = f"[Post text — primary source]:\n{caption}\n\n[Media content — additional context]:\n{raw_media}"
+            else:
+                raw = raw_media
+
+            return await _run_pipeline(raw)
         except asyncio.TimeoutError:
-            return "Timed out — please try again"
+            return "⏱ Timed out — please try again"
         except Exception as e:
-            return f"Something went wrong: {str(e)}"
+            return f"⚠️ Something went wrong: {str(e)}"
 
 
-async def process_media_group(images: list[bytes]) -> str:
+async def process_media_group(images: list[bytes], caption: str = "") -> str:
     async with _api_semaphore:
         try:
             total_calls = len(images) + 1
@@ -166,26 +346,21 @@ async def process_media_group(images: list[bytes]) -> str:
                     parts.append(f"[Image {i+1}]: Could not extract ({str(e)})")
 
             combined = "\n\n".join(parts)
-            analysis = await asyncio.wait_for(asyncio.to_thread(_analyze, combined), timeout=60.0)
-            if isinstance(analysis, list):
-                analysis = analysis[0] if analysis else {}
-            save_entry(analysis.get("content_type", "other"), analysis.get("summary", ""),
-                       analysis.get("tags", []), analysis.get("folder", "Personal"), combined)
-            return _format(analysis)
+            if caption:
+                raw = f"[Post text — primary source]:\n{caption}\n\n[Media content — additional context]:\n{combined}"
+            else:
+                raw = combined
+
+            return await _run_pipeline(raw)
         except asyncio.TimeoutError:
-            return "Timed out — please try again"
+            return "⏱ Timed out — please try again"
         except Exception as e:
-            return f"Something went wrong: {str(e)}"
+            return f"⚠️ Something went wrong: {str(e)}"
 
 
 async def process_text(text: str) -> str:
     async with _api_semaphore:
         try:
-            analysis = await asyncio.wait_for(asyncio.to_thread(_analyze, text), timeout=60.0)
-            if isinstance(analysis, list):
-                analysis = analysis[0] if analysis else {}
-            save_entry(analysis.get("content_type", "other"), analysis.get("summary", ""),
-                       analysis.get("tags", []), analysis.get("folder", "Personal"), text)
-            return _format(analysis)
+            return await _run_pipeline(text)
         except Exception as e:
-            return f"Something went wrong: {str(e)}"
+            return f"⚠️ Something went wrong: {str(e)}"
