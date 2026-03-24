@@ -84,7 +84,9 @@ Content:
 Return a JSON with these fields:
 {{
   "content_type": "book|place|recipe|philosophy|spanish|film|health|other",
-  "summary": "2-4 sentence summary in English",
+  "title": "short title, max 6 words",
+  "title": "short punchy title, max 6 words",
+  "summary": "2-4 sentences in English. Use \\n to separate distinct thoughts or paragraphs.",
   "tags": ["tag1", "tag2", "tag3"],
   "folder": "Crecer|Descanso|Salud|Creatividad|Dinero|Trabajo|Personal",
   "key_points": [],
@@ -118,6 +120,7 @@ Enrichment by type — extract from content only, do NOT invent external data li
 IMPORTANT for recipes: convert ALL measurements to metric. Use grams, ml, °C only. Never output cups, oz, °F, tbsp, tsp as final units.
 
 key_points: {"""IMPORTANT: this is a video transcript — extract all specific facts, names, items, comparisons as key_points.""" if is_video else """Leave key_points empty — this is not a video."""} Extract the most important specific points — actual facts, names, items, steps, comparisons, equivalents. Use short bullet-style strings. Empty array if not a video.
+title: short punchy title for this saved item, max 6 words. Not a sentence — more like a label.
 youtube_videos: list any YouTube video titles mentioned or visible in the content. Empty array if none.
 is_exhibition: true if content is about an art exhibition, museum show, gallery, or cultural event with a venue.
 exhibition_name / exhibition_venue: fill if is_exhibition is true.
@@ -230,6 +233,7 @@ def _format(analysis: dict) -> str:
     ct = analysis.get("content_type", "other")
     type_label = CONTENT_TYPES.get(ct, "📌 Other")
     folder = analysis.get("folder", "Personal")
+    title = analysis.get("title", "")
     summary = analysis.get("summary", "")
     tags = " ".join([f"#{t.replace(' ', '_').lower()}" for t in analysis.get("tags", [])])
 
@@ -298,7 +302,8 @@ def _format(analysis: dict) -> str:
         else:
             yt_lines.append(f"🎥 {v['title']} — не найдено на YouTube")
 
-    result = f"{type_label} | 📁 {folder}\n\n📝 Summary\n{summary}\n\n🏷 {tags}"
+    title_line = f"**{title}**\n" if title else ""
+    result = f"{type_label} | 📁 {folder}\n\n{title_line}📝 Summary\n{summary}\n\n🏷 {tags}"
     if key_points:
         kp_text = "\n".join(f"• {p}" for p in key_points)
         result += f"\n\n📌 Key points\n{kp_text}"
