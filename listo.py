@@ -4,7 +4,7 @@ import os
 from collections import defaultdict
 from aiogram import Bot, Dispatcher, F
 from aiogram.filters import CommandStart
-from aiogram.types import Message, MessageOriginUser, MessageOriginChannel, MessageOriginHiddenUser
+from aiogram.types import Message, MessageOriginUser, MessageOriginChannel
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from dotenv import load_dotenv
 from pipeline import process_media, process_text, process_media_group
