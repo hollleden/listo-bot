@@ -75,7 +75,7 @@ def _extract_video(file_bytes: bytes) -> str:
 # Step 1: Analyze — Gemini reads content, returns structured JSON
 # ---------------------------------------------------------------------------
 
-def _analyze(raw_content: str) -> dict:
+def _analyze(raw_content: str, is_video: bool = False) -> dict:
     prompt = f"""You are an assistant for organizing saved content from TikTok, Reels, and Telegram.
 
 Content:
@@ -87,9 +87,7 @@ Return a JSON with these fields:
   "summary": "2-4 sentence summary in English",
   "tags": ["tag1", "tag2", "tag3"],
   "folder": "Crecer|Descanso|Salud|Creatividad|Dinero|Trabajo|Personal",
-  "fact_check": [
-    {{"claim": "factual claim", "verdict": "True|Disputed|False|Cannot verify", "note": "explanation"}}
-  ],
+  "key_points": [],
   "enrichment": {{}},
   "youtube_videos": [],
   "is_exhibition": false,
@@ -119,6 +117,7 @@ Enrichment by type — extract from content only, do NOT invent external data li
 
 IMPORTANT for recipes: convert ALL measurements to metric. Use grams, ml, °C only. Never output cups, oz, °F, tbsp, tsp as final units.
 
+key_points: {"""IMPORTANT: this is a video transcript — extract all specific facts, names, items, comparisons as key_points.""" if is_video else """Leave key_points empty — this is not a video."""} Extract the most important specific points — actual facts, names, items, steps, comparisons, equivalents. Use short bullet-style strings. Empty array if not a video.
 youtube_videos: list any YouTube video titles mentioned or visible in the content. Empty array if none.
 is_exhibition: true if content is about an art exhibition, museum show, gallery, or cultural event with a venue.
 exhibition_name / exhibition_venue: fill if is_exhibition is true.
@@ -234,20 +233,28 @@ def _format(analysis: dict) -> str:
     summary = analysis.get("summary", "")
     tags = " ".join([f"#{t.replace(' ', '_').lower()}" for t in analysis.get("tags", [])])
 
-    fc_lines = []
-    for fc in analysis.get("fact_check", []):
-        verdict = fc.get("verdict", "")
-        claim = fc.get("claim", "")
-        note = fc.get("note", "")
-        fc_lines.append(f"- {verdict}: {claim} — {note}")
-    fact_check_text = "\n".join(fc_lines) if fc_lines else "No specific facts to verify"
+    # Key points (video only)
+    key_points = analysis.get("key_points", [])
 
     enrich = analysis.get("enrichment", {})
-    enrich_lines = [
-        f"- {k}: {', '.join(v) if isinstance(v, list) else v}"
-        for k, v in enrich.items()
-        if v and v != "" and v != [] and k not in ("goodreads_rating", "imdb_rating")
-    ]
+    enrich_lines = []
+    if ct == "health":
+        enrich = {}  # health enrichment is redundant with summary
+    for k, v in enrich.items():
+        if not v or v == "" or v == [] or k in ("goodreads_rating", "imdb_rating", "evidence_level"):
+            continue
+        if isinstance(v, list):
+            if all(isinstance(i, dict) for i in v):
+                # list of dicts (e.g. places) — rendered via links
+                continue
+            enrich_lines.append(f"- {k}: {', '.join(str(i) for i in v)}")
+        elif isinstance(v, dict):
+            # flatten one level: show each subfield as its own line
+            for sub_k, sub_v in v.items():
+                if sub_v and sub_v != "":
+                    enrich_lines.append(f"- {sub_k}: {sub_v}")
+        else:
+            enrich_lines.append(f"- {k}: {v}")
     enrich_text = "\n".join(enrich_lines)
 
     # Links
@@ -291,7 +298,10 @@ def _format(analysis: dict) -> str:
         else:
             yt_lines.append(f"🎥 {v['title']} — не найдено на YouTube")
 
-    result = f"{type_label} | 📁 {folder}\n\n📝 Summary\n{summary}\n\n🏷 {tags}\n\nFact-check\n{fact_check_text}"
+    result = f"{type_label} | 📁 {folder}\n\n📝 Summary\n{summary}\n\n🏷 {tags}"
+    if key_points:
+        kp_text = "\n".join(f"• {p}" for p in key_points)
+        result += f"\n\n📌 Key points\n{kp_text}"
     if enrich_text:
         result += f"\n\nDetails\n{enrich_text}"
     if link_lines:
@@ -306,8 +316,8 @@ def _format(analysis: dict) -> str:
 # Pipeline runner
 # ---------------------------------------------------------------------------
 
-async def _run_pipeline(raw_content: str) -> str:
-    analysis = await asyncio.wait_for(asyncio.to_thread(_analyze, raw_content), timeout=60.0)
+async def _run_pipeline(raw_content: str, is_video: bool = False) -> str:
+    analysis = await asyncio.wait_for(asyncio.to_thread(_analyze, raw_content, is_video=is_video), timeout=60.0)
     if isinstance(analysis, list):
         analysis = analysis[0] if analysis else {}
     # Enrich runs outside the semaphore implicitly since it's IO-bound web search
@@ -345,7 +355,7 @@ async def process_media(file_bytes: bytes, media_type: str, caption: str = "") -
             else:
                 raw = raw_media
 
-            return await _run_pipeline(raw)
+            return await _run_pipeline(raw, is_video=(media_type == "video"))
         except asyncio.TimeoutError:
             return "⏱ Timed out — please try again"
         except Exception as e:
