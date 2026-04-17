@@ -3,9 +3,13 @@ import json
 import tempfile
 import asyncio
 import time
+import requests
 from google import genai
 from google.genai import types
 from database import save_entry
+
+AIRTABLE_PAT = os.getenv("AIRTABLE_PAT")          # Personal Access Token
+AIRTABLE_BASE_ID = os.getenv("AIRTABLE_BASE_ID")  # e.g. appXXXXXXXXXXXXXX
 from enrichment import (
     search_goodreads,
     search_press_reviews,
@@ -29,6 +33,7 @@ CONTENT_TYPES = {
     "spanish": "💃 Spanish",
     "film": "🎬 Film / Series",
     "health": "💚 Health",
+    "retail": "🛍️ Retail",
     "other": "📌 Other",
 }
 
@@ -76,19 +81,18 @@ def _extract_video(file_bytes: bytes) -> str:
 # ---------------------------------------------------------------------------
 
 def _analyze(raw_content: str, is_video: bool = False) -> dict:
-    prompt = f"""You are an assistant for organizing saved content from TikTok, Reels, and Telegram.
+    prompt = f"""You are an assistant for organizing saved content from TikTok, Reels, Telegram, and Google Maps.
 
 Content:
 {raw_content}
 
 Return a JSON with these fields:
 {{
-  "content_type": "book|place|recipe|philosophy|spanish|film|health|other",
-  "title": "short title, max 6 words",
+  "content_type": "book|place|recipe|philosophy|spanish|film|health|retail|other",
   "title": "short punchy title, max 6 words",
   "summary": "2-4 sentences in English. Use \\n to separate distinct thoughts or paragraphs.",
   "tags": ["tag1", "tag2", "tag3"],
-  "folder": "Crecer|Descanso|Salud|Creatividad|Dinero|Trabajo|Personal",
+  "folder": "Crecer|Descanso|Salud|Creatividad|Dinero|Trabajo|Curación|Personal",
   "key_points": [],
   "enrichment": {{}},
   "youtube_videos": [],
@@ -100,37 +104,120 @@ Return a JSON with these fields:
 
 Folder rules:
 - Books, philosophy, Spanish, growth -> Crecer
-- Travel, places -> Descanso
+- Travel, places (non-retail) -> Descanso
 - Health, recipes, body -> Salud
 - Films, creativity -> Creatividad
 - Money -> Dinero
 - Work -> Trabajo
+- Fashion, stores, brands, boutiques, retail, designers -> Curación
 - Other -> Personal
 
-Enrichment by type — extract from content only, do NOT invent external data like ratings or URLs:
+Use content_type "retail" when content is about: fashion brands, clothing stores, boutiques, concept stores,
+independent designers, vintage shops, or any place/brand you might want to visit or buy from.
+This includes Google Maps links to shops, TikTok videos about brands, Instagram posts about stores.
+
+Enrichment by type — extract from content only, do NOT invent external data:
 - book: {{"title": "", "author": "", "year": "", "genre": ""}}
 - place: {{"places": [{{"name": "", "city": "", "country": ""}}], "best_season": "", "approx_budget": ""}}
-  If multiple places are mentioned, list ALL of them in "places". Always use a list, even for a single place.
+  If multiple places are mentioned, list ALL of them. Always use a list, even for a single place.
 - recipe: {{"cook_time": "", "difficulty": "easy|medium|hard", "key_ingredients": [], "dietary": ""}}
 - philosophy: {{"school": "", "key_thinker": "", "opposite_view": ""}}
 - spanish: {{"level": "A1|A2|B1|B2|C1", "key_words": []}}
 - film: {{"title": "", "year": "", "genre": ""}}
 - health: {{"topic": "", "evidence_level": "scientific|popular|anecdotal"}}
+- retail: {{
+    "items": [
+      {{
+        "name": "brand or store name",
+        "item_type": "Brand|Store|Both",
+        "instagram": "@handle or empty string",
+        "website": "url or empty string",
+        "origin": "city/country or empty string",
+        "neighbourhood": "Barcelona neighbourhood if mentioned, else empty string",
+        "about": "1-2 sentences, editorial tone, based only on what the content says",
+        "categories": ["pick any that apply: Handmade, Vintage, Designer, Luxury, Pre-owned, Antique, Food"]
+      }}
+    ]
+  }}
+  If multiple brands or stores are mentioned, list ALL of them as separate items.
+  A TikTok about 3 brands → 3 items. A Google Maps link for 1 store → 1 item.
 
-IMPORTANT for recipes: convert ALL measurements to metric. Use grams, ml, °C only. Never output cups, oz, °F, tbsp, tsp as final units.
+IMPORTANT for recipes: convert ALL measurements to metric.
 
-key_points: {"""IMPORTANT: this is a video transcript — extract all specific facts, names, items, comparisons as key_points.""" if is_video else """Leave key_points empty — this is not a video."""} Extract the most important specific points — actual facts, names, items, steps, comparisons, equivalents. Use short bullet-style strings. Empty array if not a video.
-title: short punchy title for this saved item, max 6 words. Not a sentence — more like a label.
-youtube_videos: list any YouTube video titles mentioned or visible in the content. Empty array if none.
-is_exhibition: true if content is about an art exhibition, museum show, gallery, or cultural event with a venue.
+key_points: {"""IMPORTANT: this is a video — extract all specific facts, names, items as key_points.""" if is_video else """Leave key_points empty."""}
+youtube_videos: list any YouTube video titles mentioned. Empty array if none.
+is_exhibition: true only for art exhibitions or cultural events with a venue.
 exhibition_name / exhibition_venue: fill if is_exhibition is true.
-exhibition_url: if the post contains a direct URL to the event/exhibition website, put it here. Otherwise leave empty.
+exhibition_url: direct URL to event if visible, else empty.
 
 Return ONLY valid JSON. No markdown. No extra text."""
 
     response = client.models.generate_content(model=MODEL, contents=prompt)
     text = response.text.strip().replace("```json", "").replace("```", "").strip()
     return json.loads(text)
+
+
+# ---------------------------------------------------------------------------
+# Airtable push — retail items only
+# ---------------------------------------------------------------------------
+
+def _push_to_airtable(items: list) -> list[str]:
+    """Create Draft records in Airtable for each detected retail item.
+    Stores go to the Stores table, Brands to the Brands table, Both → both tables.
+    Returns a list of human-readable confirmation strings."""
+    if not AIRTABLE_PAT or not AIRTABLE_BASE_ID:
+        return []
+
+    headers = {
+        "Authorization": f"Bearer {AIRTABLE_PAT}",
+        "Content-Type": "application/json",
+    }
+    created = []
+
+    for item in items:
+        name = (item.get("name") or "").strip()
+        if not name:
+            continue
+
+        item_type = item.get("item_type", "Brand")
+        tables = []
+        if item_type == "Both":
+            tables = ["Stores", "Brands"]
+        elif item_type == "Store":
+            tables = ["Stores"]
+        else:
+            tables = ["Brands"]
+
+        base_fields = {
+            "Name": name,
+            "About": item.get("about") or "",
+            "Instagram": item.get("instagram") or "",
+            "Website": item.get("website") or "",
+            "Origin": item.get("origin") or "",
+            "Status": "Draft",
+        }
+        categories = [c for c in (item.get("categories") or []) if c]
+        if categories:
+            base_fields["Categories"] = categories
+
+        neighbourhood = (item.get("neighbourhood") or "").strip()
+
+        for table in tables:
+            fields = dict(base_fields)
+            if table == "Stores" and neighbourhood:
+                fields["Neighbourhood"] = neighbourhood
+
+            url = f"https://api.airtable.com/v0/{AIRTABLE_BASE_ID}/{table}"
+            try:
+                resp = requests.post(url, headers=headers, json={"fields": fields}, timeout=10)
+                if resp.ok:
+                    created.append(f"{table[:-1]}: {name}")
+                else:
+                    created.append(f"⚠️ {name} ({table}) — {resp.status_code}: {resp.text[:80]}")
+            except Exception as e:
+                created.append(f"⚠️ {name} — network error: {str(e)[:60]}")
+
+    return created
 
 
 # ---------------------------------------------------------------------------
@@ -188,6 +275,13 @@ def _enrich(analysis: dict) -> dict:
                     maps_links.append({"name": name, "url": url})
         if maps_links:
             links["google_maps"] = maps_links
+
+    # Retail — push each detected item to Airtable as a Draft
+    elif ct == "retail":
+        items = enrich.get("items", [])
+        if items:
+            created = _push_to_airtable(items)
+            analysis["airtable_created"] = created
 
     # YouTube videos
     youtube_titles = analysis.get("youtube_videos", [])
@@ -302,6 +396,39 @@ def _format(analysis: dict) -> str:
         else:
             yt_lines.append(f"🎥 {v['title']} — не найдено на YouTube")
 
+    # --- Retail: custom card format, skip generic formatter below ---
+    if ct == "retail":
+        items = enrich.get("items", [])
+        lines = [f"{type_label} | 📁 Curación\n"]
+        for item in items:
+            name = item.get("name", "?")
+            itype = item.get("item_type", "")
+            label = f"**{name}**" + (f"  _{itype}_" if itype else "")
+            lines.append(label)
+            if item.get("about"):
+                lines.append(item["about"])
+            cats = item.get("categories", [])
+            if cats:
+                lines.append(f"📂 {', '.join(cats)}")
+            if item.get("neighbourhood"):
+                lines.append(f"📍 {item['neighbourhood']}")
+            if item.get("instagram"):
+                lines.append(f"📸 {item['instagram']}")
+            if item.get("website"):
+                lines.append(f"🌐 {item['website']}")
+            lines.append("")  # blank line between items
+
+        created = analysis.get("airtable_created", [])
+        if created:
+            lines.append("✅ Saved to Airtable:\n" + "\n".join(f"  · {c}" for c in created))
+        elif AIRTABLE_PAT:
+            lines.append("_(nothing pushed — no items detected)_")
+        else:
+            lines.append("_(Airtable not configured — add AIRTABLE_PAT + AIRTABLE_BASE_ID to .env)_")
+
+        return "\n".join(lines)
+
+    # --- Generic formatter for all other content types ---
     title_line = f"**{title}**\n" if title else ""
     result = f"{type_label} | 📁 {folder}\n\n{title_line}📝 Summary\n{summary}\n\n🏷 {tags}"
     if key_points:
