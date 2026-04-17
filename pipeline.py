@@ -198,7 +198,6 @@ def _push_to_airtable(items: list) -> list[str]:
             "Instagram": item.get("instagram") or "",
             "Website": item.get("website") or "",
             "Origin": item.get("origin") or "",
-            "Status": "Draft",
         }
         categories = [c for c in (item.get("categories") or []) if c]
         if categories:
