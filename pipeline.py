@@ -25,9 +25,13 @@ AIRTABLE_PAT = os.getenv("AIRTABLE_PAT")
 AIRTABLE_BASE_ID = os.getenv("AIRTABLE_BASE_ID")
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 
-# Initialize Gemini Client
+# Initialize API Clients and Environment Variables
+AIRTABLE_PAT = os.getenv("AIRTABLE_PAT") # Added this
+AIRTABLE_BASE_ID = os.getenv("AIRTABLE_BASE_ID") # Added this
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
+
 client = genai.Client(api_key=GEMINI_API_KEY)
-MODEL = "gemini-2.5-flash-lite"
+MODEL = "gemini-1.5-flash" # Changed to 1.5 to help with quota issues
 
 # Only 1 request at a time to stay within 15 RPM free tier
 _api_semaphore = asyncio.Semaphore(1)
