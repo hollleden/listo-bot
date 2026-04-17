@@ -7,9 +7,6 @@ import requests
 from google import genai
 from google.genai import types
 from database import save_entry
-
-AIRTABLE_PAT = os.getenv("AIRTABLE_PAT")          # Personal Access Token
-AIRTABLE_BASE_ID = os.getenv("AIRTABLE_BASE_ID")  # e.g. appXXXXXXXXXXXXXX
 from enrichment import (
     search_goodreads,
     search_press_reviews,
@@ -479,7 +476,7 @@ async def process_media(file_bytes: bytes, media_type: str, caption: str = "") -
                 )
             else:
                 raw_media = await asyncio.wait_for(
-                    asyncio.to_thread(_extract_video, file_bytes), timeout=120.0
+                    asyncio.to_thread(_extract_video, file_bytes), timeout=300.0
                 )
 
             if caption:
