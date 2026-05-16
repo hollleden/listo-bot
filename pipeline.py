@@ -3,29 +3,13 @@ import json
 import tempfile
 import asyncio
 import time
-import requests
 from google import genai
 from google.genai import types
-from database import save_entry
-from enrichment import (
-    search_goodreads,
-    search_press_reviews,
-    search_imdb,
-    search_exhibition,
-    search_youtube,
-    google_maps_link,
-)
 
-# --- 1. Настройки и Клиенты ---
-AIRTABLE_PAT = os.getenv("AIRTABLE_PAT")
-AIRTABLE_BASE_ID = os.getenv("AIRTABLE_BASE_ID")
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
-
 client = genai.Client(api_key=GEMINI_API_KEY)
-# Используем стабильную бесплатную модель
-MODEL = "gemini-2.0-flash-lite" 
+MODEL = "gemini-2.0-flash-lite"
 
-# Ограничение: 1 запрос за раз, чтобы не превышать лимиты (15 RPM)
 _api_semaphore = asyncio.Semaphore(1)
 
 CONTENT_TYPES = {
@@ -40,9 +24,6 @@ CONTENT_TYPES = {
     "other": "📌 Other",
 }
 
-# ---------------------------------------------------------------------------
-# 2. Извлечение (OCR / Видео)
-# ---------------------------------------------------------------------------
 
 def _extract_image(file_bytes: bytes) -> str:
     response = client.models.generate_content(
@@ -59,13 +40,11 @@ def _extract_video(file_bytes: bytes) -> str:
     with tempfile.NamedTemporaryFile(suffix=".mp4", delete=False) as f:
         f.write(file_bytes)
         tmp_path = f.name
-
     try:
         video_file = client.files.upload(file=tmp_path, config={"mime_type": "video/mp4"})
         while video_file.state.name == "PROCESSING":
             time.sleep(3)
             video_file = client.files.get(name=video_file.name)
-
         response = client.models.generate_content(
             model=MODEL,
             contents=[
@@ -79,11 +58,7 @@ def _extract_video(file_bytes: bytes) -> str:
             os.unlink(tmp_path)
 
 
-# ---------------------------------------------------------------------------
-# 3. Анализ и Логика
-# ---------------------------------------------------------------------------
-
-def _analyze(raw_content: str, is_video: bool = False) -> dict:
+def _analyze(raw_content: str) -> dict:
     prompt = f"""You are an assistant for organizing saved content.
 Content:
 {raw_content}
@@ -95,137 +70,108 @@ Return a JSON with these fields:
   "summary": "2-4 sentences in English.",
   "tags": ["tag1", "tag2"],
   "folder": "Crecer|Descanso|Salud|Creatividad|Dinero|Trabajo|Curación|Personal",
-  "key_points": [],
-  "enrichment": {{ "items": [] }},
-  "youtube_videos": [],
-  "is_exhibition": false,
-  "exhibition_name": "",
-  "exhibition_venue": "",
-  "exhibition_url": ""
+  "key_points": ["point1", "point2"],
+  "fact_check": "one sentence on accuracy or empty string",
+  "enrichment": ""
 }}
-Return ONLY valid JSON."""
+Return ONLY valid JSON. All values must be strings or arrays of strings."""
 
     response = client.models.generate_content(model=MODEL, contents=prompt)
     text = response.text.strip().replace("```json", "").replace("```", "").strip()
-    return json.loads(text)
+    data = json.loads(text)
+    # guard: ensure no nested dicts slip through
+    for key in ("summary", "fact_check", "enrichment", "title"):
+        if isinstance(data.get(key), dict):
+            data[key] = json.dumps(data[key])
+    return data
 
 
-def _push_to_airtable(items: list) -> list[str]:
-    if not AIRTABLE_PAT or not AIRTABLE_BASE_ID:
-        return ["⚠️ Airtable credentials missing"]
+def format_result(result: dict) -> str:
+    """Format analysis dict into a human-readable bot message."""
+    ct = result.get("content_type", "other")
+    type_label = CONTENT_TYPES.get(ct, "📌 Other")
+    title = result.get("title", "Untitled")
+    summary = result.get("summary", "")
+    folder = result.get("folder", "Personal")
+    tags = result.get("tags", [])
+    key_points = result.get("key_points", [])
+    fact_check = result.get("fact_check", "")
 
-    headers = {
-        "Authorization": f"Bearer {AIRTABLE_PAT}",
-        "Content-Type": "application/json",
+    lines = [f"{type_label} | 📁 {folder}", "", f"**{title}**", summary]
+
+    if key_points:
+        lines.append("")
+        for pt in key_points[:4]:
+            lines.append(f"• {pt}")
+
+    if fact_check:
+        lines.append(f"\n🔍 {fact_check}")
+
+    if tags:
+        lines.append("\n" + " ".join(f"#{t}" for t in tags[:5]))
+
+    return "\n".join(lines)
+
+
+def extract_db_fields(result: dict) -> dict:
+    """Extract fields needed for database.save_entry."""
+    tags = result.get("tags", [])
+    if isinstance(tags, list):
+        tags = json.dumps(tags, ensure_ascii=False)
+    return {
+        "summary": result.get("summary", ""),
+        "tags": tags,
+        "folder": result.get("folder", "Personal"),
+        "fact_check": result.get("fact_check", ""),
+        "enrichment": result.get("enrichment", ""),
+        "title": result.get("title", ""),
     }
-    created = []
-
-    for item in items:
-        name = (item.get("name") or "").strip()
-        if not name: continue
-
-        # Важно: Поля "Name", "About", "Instagram" должны быть в вашей таблице "Brands"
-        fields = {
-            "Name": name,
-            "About": item.get("about") or "",
-            "Instagram": item.get("instagram") or "",
-        }
-        
-        url = f"https://api.airtable.com/v0/{AIRTABLE_BASE_ID}/Brands"
-        try:
-            resp = requests.post(url, headers=headers, json={"fields": fields}, timeout=10)
-            if resp.ok:
-                created.append(f"Brand: {name}")
-            else:
-                created.append(f"⚠️ {name}: {resp.text[:50]}")
-        except Exception as e:
-            created.append(f"⚠️ {name}: Connection error")
-
-    return created
 
 
-def _enrich(analysis: dict) -> dict:
-    ct = analysis.get("content_type", "other")
-    enrich = analysis.get("enrichment", {})
-    
-    # Если это шоппинг/ретейл, отправляем в Airtable
-    if ct == "retail":
-        items = enrich.get("items", [])
-        if items:
-            analysis["airtable_created"] = _push_to_airtable(items)
-            
-    # Здесь можно добавить поиск ссылок (Goodreads, IMDB и т.д.)
+async def _run_pipeline(raw_content: str, is_video: bool = False) -> dict:
+    """Run analysis and return result dict (saving is handled by listo.py)."""
+    analysis = await asyncio.wait_for(
+        asyncio.to_thread(_analyze, raw_content), timeout=60.0
+    )
+    analysis["raw_content"] = raw_content
     return analysis
 
 
-def _format(analysis: dict) -> str:
-    ct = analysis.get("content_type", "other")
-    type_label = CONTENT_TYPES.get(ct, "📌 Other")
-    title = analysis.get("title", "Untitled")
-    summary = analysis.get("summary", "")
-    folder = analysis.get("folder", "Personal")
-    
-    res = f"{type_label} | 📁 {folder}\n\n**{title}**\n{summary}"
-    
-    airtable = analysis.get("airtable_created", [])
-    if airtable:
-        res += "\n\n✅ Airtable:\n" + "\n".join(airtable)
-        
-    return res
-
-
-# ---------------------------------------------------------------------------
-# 4. Основные функции для запуска (Exports)
-# ---------------------------------------------------------------------------
-
-async def _run_pipeline(raw_content: str, is_video: bool = False) -> str:
-    # Запускаем тяжелые задачи в потоках, чтобы не блокировать бота
-    analysis = await asyncio.wait_for(asyncio.to_thread(_analyze, raw_content, is_video=is_video), timeout=60.0)
-    analysis = await asyncio.wait_for(asyncio.to_thread(_enrich, analysis), timeout=60.0)
-    formatted = _format(analysis)
-    
-    # Сохраняем в локальную БД (sqlite)
-    save_entry(
-        analysis.get("content_type", "other"),
-        analysis.get("summary", ""),
-        analysis.get("tags", []),
-        analysis.get("folder", "Personal"),
-        raw_content,
-    )
-    return formatted
-
-
-async def process_media(file_bytes: bytes, media_type: str, caption: str = "") -> str:
+async def process_media(file_bytes: bytes, media_type: str, caption: str = "") -> dict:
     async with _api_semaphore:
         try:
             if media_type == "image":
                 raw_media = await asyncio.to_thread(_extract_image, file_bytes)
             else:
                 raw_media = await asyncio.to_thread(_extract_video, file_bytes)
-            
             raw = f"{caption}\n\n{raw_media}" if caption else raw_media
             return await _run_pipeline(raw, is_video=(media_type == "video"))
         except Exception as e:
-            return f"⚠️ Ошибка медиа: {str(e)}"
+            return {"error": str(e), "raw_content": "", "content_type": "other",
+                    "title": "Error", "summary": str(e), "tags": [], "folder": "Personal",
+                    "fact_check": "", "enrichment": ""}
 
 
-async def process_media_group(images: list[bytes], caption: str = "") -> str:
+async def process_media_group(images: list[bytes], caption: str = "") -> dict:
     async with _api_semaphore:
         try:
             parts = []
             for i, img in enumerate(images):
                 text = await asyncio.to_thread(_extract_image, img)
                 parts.append(f"[Image {i+1}]: {text}")
-            
             raw = f"{caption}\n\n" + "\n".join(parts)
             return await _run_pipeline(raw)
         except Exception as e:
-            return f"⚠️ Ошибка группы фото: {str(e)}"
+            return {"error": str(e), "raw_content": "", "content_type": "other",
+                    "title": "Error", "summary": str(e), "tags": [], "folder": "Personal",
+                    "fact_check": "", "enrichment": ""}
 
 
-async def process_text(text: str) -> str:
+async def process_text(text: str) -> dict:
     async with _api_semaphore:
         try:
             return await _run_pipeline(text)
         except Exception as e:
-            return f"⚠️ Ошибка текста: {str(e)}"
+            return {"error": str(e), "raw_content": text, "content_type": "other",
+                    "title": "Error", "summary": str(e), "tags": [], "folder": "Personal",
+                    "fact_check": "", "enrichment": ""}
