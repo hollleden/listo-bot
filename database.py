@@ -1,43 +1,220 @@
 import os
-import json
+import secrets
+from collections import Counter
+from datetime import date, timedelta
+
 import httpx
 
-SUPABASE_URL = os.getenv("SUPABASE_URL")
-SUPABASE_KEY = os.getenv("SUPABASE_KEY")
+SUPABASE_URL = os.environ["SUPABASE_URL"].rstrip("/")
+SUPABASE_KEY = os.environ["SUPABASE_SERVICE_KEY"]
 
-HEADERS = {
+_HEADERS = {
     "apikey": SUPABASE_KEY,
     "Authorization": f"Bearer {SUPABASE_KEY}",
     "Content-Type": "application/json",
-    "Prefer": "return=minimal",
 }
 
-def save_entry(user_id, content_type, summary, tags, folder, raw_content, formatted_output=""):
+def _url(table: str) -> str:
+    return f"{SUPABASE_URL}/rest/v1/{table}"
+
+def _h(**extra):
+    return {**_HEADERS, **extra}
+
+
+def init_db():
+    pass  # Tables created via Supabase SQL Editor
+
+
+# ── entries ───────────────────────────────────────────────────────────────────
+
+def save_entry(
+    user_id: int,
+    media_type: str,
+    raw_content: str,
+    summary: str,
+    tags: str,
+    folder: str,
+    fact_check: str,
+    enrichment: str,
+    title: str = "",
+    message_id: int = None,
+    formatted_output: str = None,
+):
     payload = {
         "user_id": user_id,
-        "content_type": content_type,
+        "created_at": str(date.today()),
+        "media_type": media_type,
+        "raw_content": raw_content,
         "summary": summary,
-        "tags": json.dumps(tags, ensure_ascii=False) if isinstance(tags, list) else tags,
+        "tags": tags,
         "folder": folder,
-        "raw_content": raw_content[:5000],  # avoid huge payloads
-        "formatted_output": formatted_output,
+        "fact_check": fact_check,
+        "enrichment": enrichment,
+        "title": title,
     }
-    r = httpx.post(f"{SUPABASE_URL}/rest/v1/entries", headers=HEADERS, json=payload, timeout=10)
-    r.raise_for_status()
+    if message_id is not None:
+        payload["message_id"] = message_id
+    if formatted_output is not None:
+        payload["formatted_output"] = formatted_output
 
-def get_entries_since(days: int, user_id: int = None):
+    with httpx.Client() as c:
+        r = c.post(_url("entries"), json=payload, headers=_h())
+        r.raise_for_status()
+
+
+def get_today_count(user_id: int) -> int:
+    with httpx.Client() as c:
+        r = c.get(
+            _url("entries"),
+            params={"select": "id", "user_id": f"eq.{user_id}", "created_at": f"eq.{date.today()}"},
+            headers=_h(Prefer="count=exact"),
+        )
+        cr = r.headers.get("content-range", "*/0")
+        return int(cr.split("/")[-1]) if "/" in cr else 0
+
+
+def get_entries_since(user_id: int, since_date: str) -> list[dict]:
+    with httpx.Client() as c:
+        r = c.get(
+            _url("entries"),
+            params={
+                "select": "created_at,media_type,summary,tags,folder,fact_check,enrichment",
+                "user_id": f"eq.{user_id}",
+                "created_at": f"gte.{since_date}",
+                "order": "created_at.asc",
+            },
+            headers=_h(),
+        )
+        r.raise_for_status()
+        return r.json()
+
+
+def get_active_users() -> list[int]:
+    with httpx.Client() as c:
+        r = c.get(_url("entries"), params={"select": "user_id"}, headers=_h())
+        r.raise_for_status()
+        return list({row["user_id"] for row in r.json()})
+
+
+def get_recent_entries(user_id: int, limit: int = 10) -> list[dict]:
+    with httpx.Client() as c:
+        r = c.get(
+            _url("entries"),
+            params={
+                "select": "id,created_at,folder,summary,media_type",
+                "user_id": f"eq.{user_id}",
+                "order": "created_at.desc,id.desc",
+                "limit": limit,
+            },
+            headers=_h(),
+        )
+        r.raise_for_status()
+        return r.json()
+
+
+def search_entries(user_id: int, query: str, limit: int = 5) -> list[dict]:
+    q = query.replace("*", "").replace("(", "").replace(")", "")
+    with httpx.Client() as c:
+        r = c.get(
+            _url("entries"),
+            params={
+                "select": "id,created_at,folder,summary,media_type",
+                "user_id": f"eq.{user_id}",
+                "or": f"(summary.ilike.*{q}*,tags.ilike.*{q}*,raw_content.ilike.*{q}*)",
+                "order": "created_at.desc,id.desc",
+                "limit": limit,
+            },
+            headers=_h(),
+        )
+        r.raise_for_status()
+        return r.json()
+
+
+def delete_entry(entry_id: int, user_id: int) -> bool:
+    with httpx.Client() as c:
+        r = c.delete(
+            _url("entries"),
+            params={"id": f"eq.{entry_id}", "user_id": f"eq.{user_id}"},
+            headers=_h(),
+        )
+        r.raise_for_status()
+        return r.status_code in (200, 204)
+
+
+# ── users / tokens ────────────────────────────────────────────────────────────
+
+def ensure_user_token(user_id: int) -> str:
+    with httpx.Client() as c:
+        r = c.get(
+            _url("users"),
+            params={"user_id": f"eq.{user_id}", "select": "token"},
+            headers=_h(),
+        )
+        r.raise_for_status()
+        rows = r.json()
+        if rows:
+            return rows[0]["token"]
+        token = secrets.token_urlsafe(8)
+        r2 = c.post(
+            _url("users"),
+            json={"user_id": user_id, "token": token},
+            headers=_h(Prefer="return=representation"),
+        )
+        r2.raise_for_status()
+        return token
+
+
+def get_user_by_token(token: str):
+    with httpx.Client() as c:
+        r = c.get(
+            _url("users"),
+            params={"token": f"eq.{token}", "select": "user_id"},
+            headers=_h(),
+        )
+        r.raise_for_status()
+        rows = r.json()
+        return rows[0]["user_id"] if rows else None
+
+
+# ── web API queries ───────────────────────────────────────────────────────────
+
+def get_entries_web(user_id: int, folder=None, query=None, limit=100) -> list[dict]:
     params = {
-        "select": "content_type,summary,tags,folder,created_at",
-        "created_at": f"gte.{_days_ago(days)}",
-        "order": "folder,content_type",
+        "select": "id,title,summary,tags,folder,created_at",
+        "user_id": f"eq.{user_id}",
+        "order": "created_at.desc",
+        "limit": limit,
     }
-    if user_id:
-        params["user_id"] = f"eq.{user_id}"
-    r = httpx.get(f"{SUPABASE_URL}/rest/v1/entries", headers=HEADERS, params=params, timeout=10)
-    r.raise_for_status()
-    rows = r.json()
-    return [(e["content_type"], e["summary"], e["tags"], e["folder"], e["created_at"]) for e in rows]
+    if folder and folder != "All":
+        params["folder"] = f"eq.{folder}"
+    if query:
+        q = query.replace("*", "")
+        params["or"] = f"(summary.ilike.*{q}*,tags.ilike.*{q}*,raw_content.ilike.*{q}*)"
+    with httpx.Client() as c:
+        r = c.get(_url("entries"), params=params, headers=_h())
+        r.raise_for_status()
+        return r.json()
 
-def _days_ago(days):
-    from datetime import datetime, timedelta
-    return (datetime.utcnow() - timedelta(days=days)).isoformat()
+
+def get_web_stats(user_id: int) -> dict:
+    week_ago = str(date.today() - timedelta(days=7))
+    with httpx.Client() as c:
+        rt = c.get(
+            _url("entries"),
+            params={"select": "id", "user_id": f"eq.{user_id}"},
+            headers=_h(Prefer="count=exact"),
+        )
+        total = int(rt.headers.get("content-range", "*/0").split("/")[-1])
+
+        rw = c.get(
+            _url("entries"),
+            params={"select": "id", "user_id": f"eq.{user_id}", "created_at": f"gte.{week_ago}"},
+            headers=_h(Prefer="count=exact"),
+        )
+        this_week = int(rw.headers.get("content-range", "*/0").split("/")[-1])
+
+        rf = c.get(_url("entries"), params={"select": "folder", "user_id": f"eq.{user_id}"}, headers=_h())
+        counts = Counter(row["folder"] for row in rf.json() if row.get("folder"))
+        top_folder = counts.most_common(1)[0][0] if counts else "None"
+
+    return {"total": total, "this_week": this_week, "top_folder": top_folder}
