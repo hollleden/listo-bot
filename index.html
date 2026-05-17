@@ -21,12 +21,13 @@
   --ink-light: #BBBBBB;
   --shadow: 2px 2px 0px #111111;
   --shadow-h: 3px 3px 0px #111111;
-  --crecer: #A3B899;
-  --salud: #D39E82;
-  --creatividad: #E6C594;
-  --descanso: #AEC6CF;
-  --dinero: #B8B5CE;
-  --trabajo: #C4B59A;
+  --grow: #A3B899;
+  --health: #D39E82;
+  --creativity: #E6C594;
+  --rest: #AEC6CF;
+  --money: #B8B5CE;
+  --work: #C4B59A;
+  --curation: #C8B8A2;
   --personal: #D4A5A5;
   --folder-none: #E0DBD1;
 }
@@ -94,14 +95,15 @@ body::after {
 .tab { font-family:'Space Mono',monospace; font-size:9px; text-transform:uppercase; letter-spacing:0.06em; padding:7px 13px 8px; cursor:pointer; border:1.5px solid var(--ink); border-bottom:none; position:relative; margin-right:-1.5px; white-space:nowrap; clip-path:polygon(7px 0%,calc(100% - 7px) 0%,100% 7px,100% 100%,0% 100%,0% 7px); transition:filter 0.1s; color:var(--ink); }
 .tab:hover:not(.active) { filter:brightness(0.92); }
 .tab.active { background:var(--bg) !important; z-index:10; margin-bottom:-1.5px; padding-bottom:9px; }
-.tab[data-f="All"]         { background:#D8D4C8; }
-.tab[data-f="Crecer"]      { background:var(--crecer); }
-.tab[data-f="Salud"]       { background:var(--salud); }
-.tab[data-f="Creatividad"] { background:var(--creatividad); }
-.tab[data-f="Descanso"]    { background:var(--descanso); }
-.tab[data-f="Dinero"]      { background:var(--dinero); }
-.tab[data-f="Trabajo"]     { background:var(--trabajo); }
-.tab[data-f="Personal"]    { background:var(--personal); }
+.tab[data-f="All"]        { background:#D8D4C8; }
+.tab[data-f="Grow"]       { background:var(--grow); }
+.tab[data-f="Health"]     { background:var(--health); }
+.tab[data-f="Creativity"] { background:var(--creativity); }
+.tab[data-f="Rest"]       { background:var(--rest); }
+.tab[data-f="Money"]      { background:var(--money); }
+.tab[data-f="Work"]       { background:var(--work); }
+.tab[data-f="Curation"]   { background:var(--curation); }
+.tab[data-f="Personal"]   { background:var(--personal); }
 
 /* ── CONTENT ── */
 .content { flex:1; display:flex; overflow:hidden; }
@@ -294,12 +296,13 @@ body::after {
     <div class="tabs-wrap">
       <div class="tabs" id="tabs">
         <div class="tab active" data-f="All">All</div>
-        <div class="tab" data-f="Crecer">🌱 Crecer</div>
-        <div class="tab" data-f="Salud">🌿 Salud</div>
-        <div class="tab" data-f="Creatividad">🎨 Creatividad</div>
-        <div class="tab" data-f="Descanso">🌙 Descanso</div>
-        <div class="tab" data-f="Dinero">💰 Dinero</div>
-        <div class="tab" data-f="Trabajo">💼 Trabajo</div>
+        <div class="tab" data-f="Grow">🌱 Grow</div>
+        <div class="tab" data-f="Health">🌿 Health</div>
+        <div class="tab" data-f="Creativity">🎨 Creativity</div>
+        <div class="tab" data-f="Rest">🌙 Rest</div>
+        <div class="tab" data-f="Money">💰 Money</div>
+        <div class="tab" data-f="Work">💼 Work</div>
+        <div class="tab" data-f="Curation">🗂 Curation</div>
         <div class="tab" data-f="Personal">🌸 Personal</div>
       </div>
     </div>
@@ -383,8 +386,8 @@ const S = {
 /* ════════════════════════════════════════
    LOOKUPS
 ════════════════════════════════════════ */
-const FC = { Crecer:'#A3B899', Salud:'#D39E82', Creatividad:'#E6C594', Descanso:'#AEC6CF', Dinero:'#B8B5CE', Trabajo:'#C4B59A', Personal:'#D4A5A5' };
-const FE = { Crecer:'🌱', Salud:'🌿', Creatividad:'🎨', Descanso:'🌙', Dinero:'💰', Trabajo:'💼', Personal:'🌸' };
+const FC = { Grow:'#A3B899', Health:'#D39E82', Creativity:'#E6C594', Rest:'#AEC6CF', Money:'#B8B5CE', Work:'#C4B59A', Curation:'#C8B8A2', Personal:'#D4A5A5' };
+const FE = { Grow:'🌱', Health:'🌿', Creativity:'🎨', Rest:'🌙', Money:'💰', Work:'💼', Curation:'🗂', Personal:'🌸' };
 const fc = f => FC[f] || '#E0DBD1';
 const fe = f => FE[f] || '📌';
 

@@ -67,7 +67,7 @@ Return a JSON with these fields:
   "title": "short punchy title (max 10 words)",
   "summary": "2-3 sentences in English.",
   "tags": ["tag1", "tag2", "tag3"],
-  "folder": "Crecer|Descanso|Salud|Creatividad|Dinero|Trabajo|Personal",
+  "folder": "Grow|Rest|Health|Creativity|Money|Work|Curation|Personal",
   "key_points": ["concise bullet point 1", "concise bullet point 2", "concise bullet point 3"],
   "fact_check": "one sentence on accuracy or empty string",
   "enrichment": {{
