@@ -7,7 +7,7 @@ import { MasonryGrid } from '@/components/listo/pin-card'
 import { PinDetailSheet } from '@/components/listo/pin-detail-sheet'
 import { LoginScreen } from '@/components/listo/login-screen'
 import { type Pin, type FolderType } from '@/lib/listo-data'
-import { fetchEntries, updateEntry, deleteEntry } from '@/lib/entries'
+import { fetchLinks, updateLink, deleteLink } from '@/lib/links'
 import { Spinner } from '@/components/ui/spinner'
 import { cn } from '@/lib/utils'
 
@@ -28,7 +28,7 @@ export default function ListoApp() {
     setIsLoading(true)
     setLoadError(null)
     try {
-      const data = await fetchEntries()
+      const data = await fetchLinks()
       setPins(data)
     } catch (error) {
       setLoadError(
@@ -105,7 +105,7 @@ export default function ListoApp() {
     setSelectedPin(updatedPin)
 
     try {
-      await updateEntry(updatedPin)
+      await updateLink(updatedPin)
     } catch (error) {
       setPins(previousPins)
       setSelectedPin(previousPins.find((p) => p.id === updatedPin.id) ?? null)
@@ -126,7 +126,7 @@ export default function ListoApp() {
     setSelectedPin(null)
 
     try {
-      await deleteEntry(pinId)
+      await deleteLink(pinId)
     } catch (error) {
       setPins(previousPins)
       alert(
