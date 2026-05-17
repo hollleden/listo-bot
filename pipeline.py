@@ -12,17 +12,7 @@ MODEL = "gemini-2.0-flash-lite"
 
 _api_semaphore = asyncio.Semaphore(1)
 
-CONTENT_TYPES = {
-    "book": "📚 Book",
-    "place": "🌍 Place",
-    "recipe": "🍽️ Recipe",
-    "philosophy": "🧠 Philosophy",
-    "spanish": "💃 Spanish",
-    "film": "🎬 Film / Series",
-    "health": "💚 Health",
-    "retail": "🛍️ Retail",
-    "other": "📌 Other",
-}
+DIVIDER = "━" * 40
 
 
 def _extract_image(file_bytes: bytes) -> str:
@@ -74,16 +64,19 @@ Content:
 
 Return a JSON with these fields:
 {{
-  "content_type": "book|place|recipe|philosophy|spanish|film|health|retail|other",
-  "title": "short punchy title",
-  "summary": "2-4 sentences in English.",
-  "tags": ["tag1", "tag2"],
-  "folder": "Crecer|Descanso|Salud|Creatividad|Dinero|Trabajo|Curación|Personal",
-  "key_points": ["point1", "point2"],
+  "title": "short punchy title (max 10 words)",
+  "summary": "2-3 sentences in English.",
+  "tags": ["tag1", "tag2", "tag3"],
+  "folder": "Crecer|Descanso|Salud|Creatividad|Dinero|Trabajo|Personal",
+  "key_points": ["concise bullet point 1", "concise bullet point 2", "concise bullet point 3"],
   "fact_check": "one sentence on accuracy or empty string",
-  "enrichment": ""
+  "enrichment": {{
+    "concepts": ["Term (brief definition)", "Term2 (brief definition)"],
+    "context": "one sentence on background, origin, or inspiration",
+    "source": "website URL or name if found, else empty string"
+  }}
 }}
-Return ONLY valid JSON. All values must be strings or arrays of strings."""
+Return ONLY valid JSON."""
 
     response = client.models.generate_content(model=MODEL, contents=prompt)
     text = response.text.strip().replace("```json", "").replace("```", "").strip()
@@ -97,27 +90,54 @@ Return ONLY valid JSON. All values must be strings or arrays of strings."""
 
 def format_result(result: dict) -> str:
     """Format analysis dict into a human-readable bot message."""
-    ct = result.get("content_type", "other")
-    type_label = CONTENT_TYPES.get(ct, "📌 Other")
-    title = result.get("title", "Untitled")
-    summary = result.get("summary", "")
     folder = result.get("folder", "Personal")
     tags = result.get("tags", [])
+    title = result.get("title", "Untitled")
     key_points = result.get("key_points", [])
-    fact_check = result.get("fact_check", "")
+    raw_content = result.get("raw_content", "")
 
-    lines = [f"{type_label} | 📁 {folder}", "", f"**{title}**", summary]
+    # Parse enrichment
+    enr_raw = result.get("enrichment", "")
+    concepts, context, source = "", "", ""
+    if enr_raw:
+        try:
+            enr = json.loads(enr_raw) if isinstance(enr_raw, str) else enr_raw
+            if isinstance(enr, dict):
+                c = enr.get("concepts", [])
+                concepts = ", ".join(c) if isinstance(c, list) else str(c)
+                context = enr.get("context", "")
+                source = enr.get("source", "")
+        except (json.JSONDecodeError, TypeError):
+            pass
 
-    if key_points:
-        lines.append("")
-        for pt in key_points[:4]:
-            lines.append(f"• {pt}")
+    first_tag = f"#{tags[0].lstrip('#')}" if tags else ""
+    header = f"📁 {folder} | {first_tag}" if first_tag else f"📁 {folder}"
 
-    if fact_check:
-        lines.append(f"\n🔍 {fact_check}")
+    lines = [header, "", f"🤖 {title}", ""]
 
+    # SUMMARY
+    lines += [DIVIDER, "📋 SUMMARY"]
+    for pt in key_points[:4]:
+        lines.append(f"• {pt}")
+
+    # TRANSCRIPTION
+    if raw_content.strip():
+        lines += ["", DIVIDER, "📝 TRANSCRIPTION (OCRs & NOTES)", raw_content.strip()]
+
+    # NERDY METADATA
+    if concepts or context or source:
+        lines += ["", DIVIDER, "🔍 NERDY METADATA"]
+        if concepts:
+            lines.append(f"• Concepts: {concepts}")
+        if context:
+            lines.append(f"• Context: {context}")
+        if source:
+            lines.append(f"• Source: {source}")
+
+    # TAGS
     if tags:
-        lines.append("\n" + " ".join(f"#{t}" for t in tags[:5]))
+        tag_line = " ".join(f"#{t.lstrip('#')}" for t in tags[:6])
+        lines += ["", DIVIDER, tag_line]
 
     return "\n".join(lines)
 

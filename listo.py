@@ -7,7 +7,7 @@ from aiogram.filters import CommandStart
 from aiogram.types import Message, MessageOriginUser, MessageOriginChannel
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from dotenv import load_dotenv
-from pipeline import process_media, process_text, process_media_group
+from pipeline import process_media, process_text, process_media_group, format_result
 from database import init_db
 from digest import send_weekly_digest, send_quarterly_digest
 
@@ -80,7 +80,7 @@ async def flush_media_group(media_group_id: str, chat_id: int):
         all_bytes.append(file_bytes.read())
 
     result = await process_media_group(all_bytes, caption=caption)
-    await bot.send_message(chat_id=chat_id, text=result)
+    await bot.send_message(chat_id=chat_id, text=format_result(result))
 
 
 @dp.message(F.photo)
@@ -107,7 +107,7 @@ async def handle_photo(message: Message):
     caption = f"{forward_prefix}{message.caption or ''}".strip()
 
     result = await process_media(file_bytes.read(), media_type="image", caption=caption)
-    await message.answer(result)
+    await message.answer(format_result(result))
 
 
 @dp.message(F.video | F.document)
@@ -123,7 +123,7 @@ async def handle_video(message: Message):
     caption = f"{forward_prefix}{message.caption or ''}".strip()
 
     result = await process_media(file_bytes.read(), media_type="video", caption=caption)
-    await message.answer(result)
+    await message.answer(format_result(result))
 
 
 @dp.message(F.text)  # F.caption removed — handled inside photo/video handlers
@@ -139,7 +139,7 @@ async def handle_text(message: Message):
 
     await message.answer("⚙️ Reading...")
     result = await process_text(full_text)
-    await message.answer(result)
+    await message.answer(format_result(result))
 
 
 async def main():
