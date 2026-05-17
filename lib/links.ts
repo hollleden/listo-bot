@@ -146,10 +146,20 @@ export function linkToPin(row: DbLink): Pin {
 export async function fetchLinks(): Promise<Pin[]> {
   assertSupabaseConfigured()
 
-  const { data, error } = await supabase
+  let { data, error } = await supabase
     .from('links')
     .select('*')
     .order('created_at', { ascending: false })
+
+  // Support projects that still expose the legacy `entries` table name.
+  if (error?.code === 'PGRST205') {
+    const fallback = await supabase
+      .from('entries')
+      .select('*')
+      .order('created_at', { ascending: false })
+    data = fallback.data
+    error = fallback.error
+  }
 
   if (error) throw error
   return (data as DbLink[]).map(linkToPin)
@@ -158,20 +168,26 @@ export async function fetchLinks(): Promise<Pin[]> {
 export async function updateLink(pin: Pin): Promise<void> {
   assertSupabaseConfigured()
 
-  const { error } = await supabase
-    .from('links')
-    .update({
-      folder: pin.folder,
-      tags: serializeTags(pin.tags),
-    })
-    .eq('id', pin.id)
+  const payload = {
+    folder: pin.folder,
+    tags: serializeTags(pin.tags),
+  }
 
+  let { error } = await supabase.from('links').update(payload).eq('id', pin.id)
+  if (error?.code === 'PGRST205') {
+    const fallback = await supabase.from('entries').update(payload).eq('id', pin.id)
+    error = fallback.error
+  }
   if (error) throw error
 }
 
 export async function deleteLink(pinId: number): Promise<void> {
   assertSupabaseConfigured()
 
-  const { error } = await supabase.from('links').delete().eq('id', pinId)
+  let { error } = await supabase.from('links').delete().eq('id', pinId)
+  if (error?.code === 'PGRST205') {
+    const fallback = await supabase.from('entries').delete().eq('id', pinId)
+    error = fallback.error
+  }
   if (error) throw error
 }
