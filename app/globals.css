@@ -1,0 +1,144 @@
+@import 'tailwindcss';
+@import 'tw-animate-css';
+
+@custom-variant dark (&:is(.dark *));
+
+:root {
+  /* Technical Blueprint Light Theme */
+  --background: #EAECE6;
+  --foreground: #222222;
+  --card: #FFFFFF;
+  --card-foreground: #222222;
+  --popover: #FFFFFF;
+  --popover-foreground: #222222;
+  --primary: #222222;
+  --primary-foreground: #FFFFFF;
+  --secondary: #F4F5F1;
+  --secondary-foreground: #222222;
+  --muted: #E0E2DC;
+  --muted-foreground: #666666;
+  --accent: #222222;
+  --accent-foreground: #FFFFFF;
+  --destructive: #DC2626;
+  --destructive-foreground: #FFFFFF;
+  --border: #222222;
+  --input: #222222;
+  --ring: #222222;
+  --radius: 4px;
+  
+  /* Folder indicator colors - muted technical */
+  --folder-crecer: #4A7C59;
+  --folder-salud: #C45C4B;
+  --folder-creatividad: #D4A84B;
+  --folder-descanso: #5B8FA8;
+  --folder-dinero: #7B5FA8;
+  --folder-trabajo: #8B7355;
+  --folder-personal: #A85B8F;
+}
+
+.dark {
+  /* Technical Blueprint Dark Theme */
+  --background: #121214;
+  --foreground: #E2E8F0;
+  --card: #1A1A1E;
+  --card-foreground: #E2E8F0;
+  --popover: #1A1A1E;
+  --popover-foreground: #E2E8F0;
+  --primary: #E2E8F0;
+  --primary-foreground: #121214;
+  --secondary: #252528;
+  --secondary-foreground: #E2E8F0;
+  --muted: #2A2A2E;
+  --muted-foreground: #94A3B8;
+  --accent: #E2E8F0;
+  --accent-foreground: #121214;
+  --destructive: #EF4444;
+  --destructive-foreground: #FFFFFF;
+  --border: #3A3A3E;
+  --input: #3A3A3E;
+  --ring: #E2E8F0;
+  
+  /* Folder indicator colors - dark mode */
+  --folder-crecer: #6B9B7A;
+  --folder-salud: #E07B6B;
+  --folder-creatividad: #E8BE6B;
+  --folder-descanso: #7BAFC8;
+  --folder-dinero: #9B7FC8;
+  --folder-trabajo: #AB9375;
+  --folder-personal: #C87BAF;
+}
+
+@theme inline {
+  --font-sans: var(--font-sans, 'Plus Jakarta Sans'), system-ui, sans-serif;
+  --font-mono: var(--font-mono, 'Space Mono'), monospace;
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --radius-sm: calc(var(--radius) - 2px);
+  --radius-md: var(--radius);
+  --radius-lg: calc(var(--radius) + 2px);
+  --radius-xl: calc(var(--radius) + 4px);
+  
+  /* Folder colors */
+  --color-folder-crecer: var(--folder-crecer);
+  --color-folder-salud: var(--folder-salud);
+  --color-folder-creatividad: var(--folder-creatividad);
+  --color-folder-descanso: var(--folder-descanso);
+  --color-folder-dinero: var(--folder-dinero);
+  --color-folder-trabajo: var(--folder-trabajo);
+  --color-folder-personal: var(--folder-personal);
+}
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+  body {
+    @apply bg-background text-foreground;
+  }
+}
+
+/* Technical monospace utilities */
+@layer utilities {
+  .font-technical {
+    font-family: var(--font-mono);
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    font-size: 0.6875rem;
+  }
+  
+  .scrollbar-thin {
+    scrollbar-width: thin;
+    scrollbar-color: var(--border) transparent;
+  }
+  
+  .scrollbar-thin::-webkit-scrollbar {
+    width: 4px;
+    height: 4px;
+  }
+  
+  .scrollbar-thin::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  
+  .scrollbar-thin::-webkit-scrollbar-thumb {
+    background-color: var(--border);
+    border-radius: 2px;
+  }
+}
