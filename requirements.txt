@@ -1,5 +1,5 @@
 aiogram
-mistralai
+mistralai>=1.0.0
 google-genai
 apscheduler
 python-dotenv
