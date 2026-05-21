@@ -1,5 +1,6 @@
 aiogram
-google-genai
+mistralai
 apscheduler
 python-dotenv
 ddgs
+httpx

@@ -1,71 +1,40 @@
 import os
 import json
-import tempfile
+import base64
 import asyncio
-import time
-from google import genai
-from google.genai import types
+import tempfile
+from mistralai import Mistral
 
-GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
-client = genai.Client(api_key=GEMINI_API_KEY)
-MODEL = "gemini-2.0-flash-lite"
+client = Mistral(api_key=os.getenv("MISTRAL_API_KEY"))
+MODEL = "mistral-small-latest"
 
 _api_semaphore = asyncio.Semaphore(1)
-
-
-def _generate_with_retry(fn, max_retries=4):
-    for attempt in range(max_retries):
-        try:
-            return fn()
-        except Exception as e:
-            if "429" in str(e) and attempt < max_retries - 1:
-                time.sleep(5 * (2 ** attempt))  # 5s, 10s, 20s, 40s
-                continue
-            raise
 
 DIVIDER = "━" * 40
 
 
 def _extract_image(file_bytes: bytes) -> str:
-    response = _generate_with_retry(lambda: client.models.generate_content(
+    b64 = base64.b64encode(file_bytes).decode()
+    response = client.chat.complete(
         model=MODEL,
-        contents=[
-            types.Part.from_bytes(data=file_bytes, mime_type="image/jpeg"),
-            """Extract content from this video in clearly labeled sections:
-
-AUDIO TRANSCRIPT:
-[Transcribe all spoken words verbatim]
-
-ON-SCREEN TEXT:
-[List all text overlays and captions with timestamps, format: MM:SS — text]
-
-VISUAL DESCRIPTION:
-[Brief description of what is shown]""",
-        ],
-    ))
-    return response.text
+        messages=[{
+            "role": "user",
+            "content": [
+                {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{b64}"}},
+                {"type": "text", "text": (
+                    "Extract content from this image in clearly labeled sections:\n\n"
+                    "ON-SCREEN TEXT:\n[List all text visible]\n\n"
+                    "VISUAL DESCRIPTION:\n[Brief description of what is shown]"
+                )},
+            ],
+        }],
+    )
+    return response.choices[0].message.content
 
 
 def _extract_video(file_bytes: bytes) -> str:
-    with tempfile.NamedTemporaryFile(suffix=".mp4", delete=False) as f:
-        f.write(file_bytes)
-        tmp_path = f.name
-    try:
-        video_file = client.files.upload(file=tmp_path, config={"mime_type": "video/mp4"})
-        while video_file.state.name == "PROCESSING":
-            time.sleep(3)
-            video_file = client.files.get(name=video_file.name)
-        response = _generate_with_retry(lambda: client.models.generate_content(
-            model=MODEL,
-            contents=[
-                video_file,
-                "Extract ALL text from subtitles and overlays. Transcribe all speech. Describe what is happening.",
-            ],
-        ))
-        return response.text
-    finally:
-        if os.path.exists(tmp_path):
-            os.unlink(tmp_path)
+    # Mistral does not support video files — analysis will use caption/context only
+    return "[Video — analysis based on caption and context]"
 
 
 def _analyze(raw_content: str) -> dict:
@@ -89,10 +58,12 @@ Return a JSON with these fields:
 }}
 Return ONLY valid JSON."""
 
-    response = _generate_with_retry(lambda: client.models.generate_content(model=MODEL, contents=prompt))
-    text = response.text.strip().replace("```json", "").replace("```", "").strip()
+    response = client.chat.complete(
+        model=MODEL,
+        messages=[{"role": "user", "content": prompt}],
+    )
+    text = response.choices[0].message.content.strip().replace("```json", "").replace("```", "").strip()
     data = json.loads(text)
-    # guard: ensure no nested dicts slip through
     for key in ("summary", "fact_check", "enrichment", "title"):
         if isinstance(data.get(key), dict):
             data[key] = json.dumps(data[key])
@@ -100,14 +71,12 @@ Return ONLY valid JSON."""
 
 
 def format_result(result: dict) -> str:
-    """Format analysis dict into a human-readable bot message."""
     folder = result.get("folder", "Personal")
     tags = result.get("tags", [])
     title = result.get("title", "Untitled")
     key_points = result.get("key_points", [])
     raw_content = result.get("raw_content", "")
 
-    # Parse enrichment
     enr_raw = result.get("enrichment", "")
     concepts, context, source = "", "", ""
     if enr_raw:
@@ -123,19 +92,15 @@ def format_result(result: dict) -> str:
 
     first_tag = f"#{tags[0].lstrip('#')}" if tags else ""
     header = f"📁 {folder} | {first_tag}" if first_tag else f"📁 {folder}"
-
     lines = [header, "", f"🤖 {title}", ""]
 
-    # SUMMARY
     lines += [DIVIDER, "📋 SUMMARY"]
     for pt in key_points[:4]:
         lines.append(f"• {pt}")
 
-    # TRANSCRIPTION
     if raw_content.strip():
         lines += ["", DIVIDER, "📝 TRANSCRIPTION (OCRs & NOTES)", raw_content.strip()]
 
-    # NERDY METADATA
     if concepts or context or source:
         lines += ["", DIVIDER, "🔍 NERDY METADATA"]
         if concepts:
@@ -145,7 +110,6 @@ def format_result(result: dict) -> str:
         if source:
             lines.append(f"• Source: {source}")
 
-    # TAGS
     if tags:
         tag_line = " ".join(f"#{t.lstrip('#')}" for t in tags[:6])
         lines += ["", DIVIDER, tag_line]
@@ -154,7 +118,6 @@ def format_result(result: dict) -> str:
 
 
 def extract_db_fields(result: dict) -> dict:
-    """Extract fields needed for database.save_entry."""
     tags = result.get("tags", [])
     if isinstance(tags, list):
         tags = json.dumps(tags, ensure_ascii=False)
@@ -169,7 +132,6 @@ def extract_db_fields(result: dict) -> dict:
 
 
 async def _run_pipeline(raw_content: str, is_video: bool = False) -> dict:
-    """Run analysis and return result dict (saving is handled by listo.py)."""
     analysis = await asyncio.wait_for(
         asyncio.to_thread(_analyze, raw_content), timeout=60.0
     )

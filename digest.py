@@ -1,10 +1,10 @@
 import os
 from datetime import datetime, date, timedelta
-from google import genai
+from mistralai import Mistral
 from database import get_entries_since, get_active_users
 
-client = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
-MODEL = "gemini-2.5-flash-lite"
+client = Mistral(api_key=os.getenv("MISTRAL_API_KEY"))
+MODEL = "mistral-small-latest"
 
 
 def _build_digest(entries: list[dict], digest_type: str) -> str:
@@ -35,8 +35,11 @@ def _get_quarterly_insight(summaries: list) -> str:
 
 Write 2-3 warm, friendly sentences about what themes stand out and what this says about their interests."""
 
-    response = client.models.generate_content(model=MODEL, contents=prompt)
-    return response.text
+    response = client.chat.complete(
+        model=MODEL,
+        messages=[{"role": "user", "content": prompt}],
+    )
+    return response.choices[0].message.content
 
 
 async def send_weekly_digest(bot):
