@@ -54,14 +54,21 @@ def _extract_video(file_bytes: bytes) -> str:
         while video_file.state.name == "PROCESSING":
             time.sleep(3)
             video_file = gemini.files.get(name=video_file.name)
-        response = gemini.models.generate_content(
-            model=MODEL_GEMINI,
-            contents=[
-                video_file,
-                "Extract ALL text from subtitles and overlays. Transcribe all speech verbatim with timestamps (MM:SS). Describe what is happening.",
-            ],
-        )
-        return response.text
+        for attempt in range(5):
+            try:
+                response = gemini.models.generate_content(
+                    model=MODEL_GEMINI,
+                    contents=[
+                        video_file,
+                        "Extract ALL text from subtitles and overlays. Transcribe all speech verbatim with timestamps (MM:SS). Describe what is happening.",
+                    ],
+                )
+                return response.text
+            except Exception as e:
+                if "429" in str(e) and attempt < 4:
+                    time.sleep(10 * (2 ** attempt))  # 10s, 20s, 40s, 80s
+                    continue
+                raise
     finally:
         if os.path.exists(tmp_path):
             os.unlink(tmp_path)
