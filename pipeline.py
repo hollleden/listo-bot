@@ -20,7 +20,7 @@ def _extract_image(file_bytes: bytes) -> str:
         model=MODEL,
         contents=[
             types.Part.from_bytes(data=file_bytes, mime_type="image/jpeg"),
-            """"Extract content from this video in clearly labeled sections:
+            """Extract content from this video in clearly labeled sections:
 
 AUDIO TRANSCRIPT:
 [Transcribe all spoken words verbatim]
@@ -29,7 +29,7 @@ ON-SCREEN TEXT:
 [List all text overlays and captions with timestamps, format: MM:SS — text]
 
 VISUAL DESCRIPTION:
-[Brief description of what is shown]"""",
+[Brief description of what is shown]""",
         ],
     )
     return response.text
