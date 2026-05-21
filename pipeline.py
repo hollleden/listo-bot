@@ -3,10 +3,15 @@ import json
 import base64
 import asyncio
 import tempfile
+import time
 from mistralai import Mistral
+from google import genai
 
-client = Mistral(api_key=os.getenv("MISTRAL_API_KEY"))
-MODEL = "mistral-small-latest"
+mistral = Mistral(api_key=os.getenv("MISTRAL_API_KEY"))
+gemini = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
+
+MODEL_MISTRAL = "mistral-small-latest"
+MODEL_GEMINI = "gemini-2.0-flash-lite"
 
 _api_semaphore = asyncio.Semaphore(1)
 
@@ -15,8 +20,8 @@ DIVIDER = "━" * 40
 
 def _extract_image(file_bytes: bytes) -> str:
     b64 = base64.b64encode(file_bytes).decode()
-    response = client.chat.complete(
-        model=MODEL,
+    response = mistral.chat.complete(
+        model=MODEL_MISTRAL,
         messages=[{
             "role": "user",
             "content": [
@@ -33,8 +38,25 @@ def _extract_image(file_bytes: bytes) -> str:
 
 
 def _extract_video(file_bytes: bytes) -> str:
-    # Mistral does not support video files — analysis will use caption/context only
-    return "[Video — analysis based on caption and context]"
+    with tempfile.NamedTemporaryFile(suffix=".mp4", delete=False) as f:
+        f.write(file_bytes)
+        tmp_path = f.name
+    try:
+        video_file = gemini.files.upload(file=tmp_path, config={"mime_type": "video/mp4"})
+        while video_file.state.name == "PROCESSING":
+            time.sleep(3)
+            video_file = gemini.files.get(name=video_file.name)
+        response = gemini.models.generate_content(
+            model=MODEL_GEMINI,
+            contents=[
+                video_file,
+                "Extract ALL text from subtitles and overlays. Transcribe all speech. Describe what is happening.",
+            ],
+        )
+        return response.text
+    finally:
+        if os.path.exists(tmp_path):
+            os.unlink(tmp_path)
 
 
 def _analyze(raw_content: str) -> dict:
@@ -58,8 +80,8 @@ Return a JSON with these fields:
 }}
 Return ONLY valid JSON."""
 
-    response = client.chat.complete(
-        model=MODEL,
+    response = mistral.chat.complete(
+        model=MODEL_MISTRAL,
         messages=[{"role": "user", "content": prompt}],
     )
     text = response.choices[0].message.content.strip().replace("```json", "").replace("```", "").strip()

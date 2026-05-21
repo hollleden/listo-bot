@@ -1,5 +1,6 @@
 aiogram
 mistralai
+google-genai
 apscheduler
 python-dotenv
 ddgs
