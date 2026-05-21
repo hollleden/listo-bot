@@ -4,6 +4,7 @@ import base64
 import asyncio
 import tempfile
 import time
+from urllib.parse import quote_plus
 from mistralai import Mistral
 from google import genai
 
@@ -15,7 +16,13 @@ MODEL_GEMINI = "gemini-2.0-flash-lite"
 
 _api_semaphore = asyncio.Semaphore(1)
 
-DIVIDER = "━" * 40
+DIVIDER = "━" * 16
+
+FOLDER_EMOJI = {
+    "Grow": "🌱", "Rest": "😴", "Health": "💚", "Creativity": "🎨",
+    "Money": "💰", "Work": "💼", "Curation": "🗂", "Personal": "💫",
+    "Beauty": "💄", "Food": "🍽", "Travel": "✈️", "Sport": "🏃",
+}
 
 
 def _extract_image(file_bytes: bytes) -> str:
@@ -27,9 +34,10 @@ def _extract_image(file_bytes: bytes) -> str:
             "content": [
                 {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{b64}"}},
                 {"type": "text", "text": (
-                    "Extract content from this image in clearly labeled sections:\n\n"
-                    "ON-SCREEN TEXT:\n[List all text visible]\n\n"
-                    "VISUAL DESCRIPTION:\n[Brief description of what is shown]"
+                    "Extract all content from this image. "
+                    "Return plain text only — no markdown, no headers, no bold, no bullet symbols.\n\n"
+                    "First list every word of text visible in the image, line by line.\n"
+                    "Then write one short paragraph describing what is shown visually."
                 )},
             ],
         }],
@@ -50,7 +58,7 @@ def _extract_video(file_bytes: bytes) -> str:
             model=MODEL_GEMINI,
             contents=[
                 video_file,
-                "Extract ALL text from subtitles and overlays. Transcribe all speech. Describe what is happening.",
+                "Extract ALL text from subtitles and overlays. Transcribe all speech verbatim with timestamps (MM:SS). Describe what is happening.",
             ],
         )
         return response.text
@@ -67,15 +75,15 @@ Content:
 Return a JSON with these fields:
 {{
   "title": "short punchy title (max 10 words)",
-  "summary": "2-3 sentences in English.",
   "tags": ["tag1", "tag2", "tag3"],
-  "folder": "Grow|Rest|Health|Creativity|Money|Work|Curation|Personal",
+  "folder": "Grow|Rest|Health|Creativity|Money|Work|Curation|Personal|Beauty|Food|Travel|Sport",
   "key_points": ["concise bullet point 1", "concise bullet point 2", "concise bullet point 3"],
+  "products": [{{"name": "product or item name", "brand": "brand name or empty string"}}],
   "fact_check": "one sentence on accuracy or empty string",
   "enrichment": {{
-    "concepts": ["Term (brief definition)", "Term2 (brief definition)"],
-    "context": "one sentence on background, origin, or inspiration",
-    "source": "website URL or name if found, else empty string"
+    "concepts": ["Term (brief definition)"],
+    "context": "one sentence on background or origin",
+    "source": "website or channel name if found, else empty string"
   }}
 }}
 Return ONLY valid JSON."""
@@ -86,7 +94,7 @@ Return ONLY valid JSON."""
     )
     text = response.choices[0].message.content.strip().replace("```json", "").replace("```", "").strip()
     data = json.loads(text)
-    for key in ("summary", "fact_check", "enrichment", "title"):
+    for key in ("fact_check", "enrichment", "title"):
         if isinstance(data.get(key), dict):
             data[key] = json.dumps(data[key])
     return data
@@ -94,47 +102,52 @@ Return ONLY valid JSON."""
 
 def format_result(result: dict) -> str:
     folder = result.get("folder", "Personal")
-    tags = result.get("tags", [])
     title = result.get("title", "Untitled")
     key_points = result.get("key_points", [])
     raw_content = result.get("raw_content", "")
+    tags = result.get("tags", [])
+    products = result.get("products", [])
 
-    enr_raw = result.get("enrichment", "")
-    concepts, context, source = "", "", ""
-    if enr_raw:
-        try:
-            enr = json.loads(enr_raw) if isinstance(enr_raw, str) else enr_raw
-            if isinstance(enr, dict):
-                c = enr.get("concepts", [])
-                concepts = ", ".join(c) if isinstance(c, list) else str(c)
-                context = enr.get("context", "")
-                source = enr.get("source", "")
-        except (json.JSONDecodeError, TypeError):
-            pass
+    emoji = FOLDER_EMOJI.get(folder, "📁")
+    lines = [f"{emoji} {folder.upper()} · {title}", ""]
 
-    first_tag = f"#{tags[0].lstrip('#')}" if tags else ""
-    header = f"📁 {folder} | {first_tag}" if first_tag else f"📁 {folder}"
-    lines = [header, "", f"🤖 {title}", ""]
-
+    # SUMMARY
     lines += [DIVIDER, "📋 SUMMARY"]
     for pt in key_points[:4]:
-        lines.append(f"• {pt}")
+        lines.append(f"▪ {pt}")
 
+    # TRANSCRIPTION
     if raw_content.strip():
-        lines += ["", DIVIDER, "📝 TRANSCRIPTION (OCRs & NOTES)", raw_content.strip()]
+        lines += ["", DIVIDER, "📝 TRANSCRIPTION"]
+        for line in raw_content.strip().split("\n"):
+            if line.strip():
+                lines.append(f"┆ {line}")
 
-    if concepts or context or source:
-        lines += ["", DIVIDER, "🔍 NERDY METADATA"]
-        if concepts:
-            lines.append(f"• Concepts: {concepts}")
-        if context:
-            lines.append(f"• Context: {context}")
-        if source:
-            lines.append(f"• Source: {source}")
+    # EXTRACTED products
+    if products:
+        lines += ["", DIVIDER, "🔍 EXTRACTED"]
+        lines.append(f"▪ {folder.upper()}")
+        for p in products:
+            name = p.get("name", "")
+            brand = p.get("brand", "")
+            if not name:
+                continue
+            query = quote_plus(f"{name} {brand}".strip())
+            google = f"https://www.google.com/search?q={query}"
+            entry = f"  • {name}"
+            if brand:
+                entry += f" by {brand}"
+            entry += f" → {google}"
+            lines.append(entry)
 
+    # TAGS
     if tags:
-        tag_line = " ".join(f"#{t.lstrip('#')}" for t in tags[:6])
-        lines += ["", DIVIDER, tag_line]
+        lines += ["", DIVIDER, "📁 FOLDER & TAGS"]
+        lines.append(f"#{folder}")
+        clean = [t.lstrip("#") for t in tags[:5]]
+        for i, t in enumerate(clean):
+            prefix = "└─" if i == len(clean) - 1 else "├─"
+            lines.append(f"{prefix} #{t}")
 
     return "\n".join(lines)
 
@@ -144,7 +157,7 @@ def extract_db_fields(result: dict) -> dict:
     if isinstance(tags, list):
         tags = json.dumps(tags, ensure_ascii=False)
     return {
-        "summary": result.get("summary", ""),
+        "summary": " | ".join(result.get("key_points", [])),
         "tags": tags,
         "folder": result.get("folder", "Personal"),
         "fact_check": result.get("fact_check", ""),
@@ -173,7 +186,7 @@ async def process_media(file_bytes: bytes, media_type: str, caption: str = "") -
         except Exception as e:
             return {"error": str(e), "raw_content": "", "content_type": "other",
                     "title": "Error", "summary": str(e), "tags": [], "folder": "Personal",
-                    "fact_check": "", "enrichment": ""}
+                    "fact_check": "", "enrichment": "", "products": []}
 
 
 async def process_media_group(images: list[bytes], caption: str = "") -> dict:
@@ -182,13 +195,13 @@ async def process_media_group(images: list[bytes], caption: str = "") -> dict:
             parts = []
             for i, img in enumerate(images):
                 text = await asyncio.to_thread(_extract_image, img)
-                parts.append(f"[Image {i+1}]: {text}")
-            raw = f"{caption}\n\n" + "\n".join(parts)
+                parts.append(f"-- Image {i+1} --\n{text}")
+            raw = f"{caption}\n\n" + "\n\n".join(parts) if caption else "\n\n".join(parts)
             return await _run_pipeline(raw)
         except Exception as e:
             return {"error": str(e), "raw_content": "", "content_type": "other",
                     "title": "Error", "summary": str(e), "tags": [], "folder": "Personal",
-                    "fact_check": "", "enrichment": ""}
+                    "fact_check": "", "enrichment": "", "products": []}
 
 
 async def process_text(text: str) -> dict:
@@ -198,4 +211,4 @@ async def process_text(text: str) -> dict:
         except Exception as e:
             return {"error": str(e), "raw_content": text, "content_type": "other",
                     "title": "Error", "summary": str(e), "tags": [], "folder": "Personal",
-                    "fact_check": "", "enrichment": ""}
+                    "fact_check": "", "enrichment": "", "products": []}
