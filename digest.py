@@ -1,34 +1,28 @@
 import os
-from datetime import datetime
+from datetime import datetime, date, timedelta
 from google import genai
-from database import get_entries_since
+from database import get_entries_since, get_active_users
 
 client = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
 MODEL = "gemini-2.5-flash-lite"
 
-CONTENT_TYPES = {
-    "book": "📚 Books", "place": "🌍 Places", "recipe": "🍽️ Recipes",
-    "philosophy": "🧠 Philosophy", "spanish": "💃 Spanish",
-    "film": "🎬 Films", "health": "💚 Health", "other": "📌 Other",
-}
 
-
-def _build_digest(entries, digest_type: str) -> str:
+def _build_digest(entries: list[dict], digest_type: str) -> str:
     grouped = {}
-    for ct, summary, tags, folder, created_at in entries:
-        grouped.setdefault(ct, []).append(summary)
+    for e in entries:
+        folder = e.get("folder", "Personal")
+        grouped.setdefault(folder, []).append(e.get("summary", ""))
 
     header = f"Listo — {'weekly digest' if digest_type == 'weekly' else 'quarterly review'}\n{datetime.now().strftime('%d.%m.%Y')}\n\n"
     body = ""
-    for ct, summaries in grouped.items():
-        label = CONTENT_TYPES.get(ct, "📌 Other")
-        body += f"{label} — {len(summaries)} saved\n"
+    for folder, summaries in grouped.items():
+        body += f"📁 {folder} — {len(summaries)} saved\n"
         for s in summaries[:5]:
-            body += f"- {s}\n"
+            body += f"• {s}\n"
         body += "\n"
 
     if digest_type == "quarterly":
-        all_summaries = [e[1] for e in entries]
+        all_summaries = [e.get("summary", "") for e in entries]
         insight = _get_quarterly_insight(all_summaries)
         body += f"Quarterly insight\n{insight}"
 
@@ -45,16 +39,19 @@ Write 2-3 warm, friendly sentences about what themes stand out and what this say
     return response.text
 
 
-async def send_weekly_digest(bot, chat_id):
-    entries = get_entries_since(7)
-    if not entries:
-        await bot.send_message(chat_id=chat_id, text="Nothing saved this week!")
-        return
-    await bot.send_message(chat_id=chat_id, text=_build_digest(entries, "weekly"))
+async def send_weekly_digest(bot):
+    since = str(date.today() - timedelta(days=7))
+    for user_id in get_active_users():
+        entries = get_entries_since(user_id, since)
+        if not entries:
+            continue
+        await bot.send_message(chat_id=user_id, text=_build_digest(entries, "weekly"))
 
 
-async def send_quarterly_digest(bot, chat_id):
-    entries = get_entries_since(90)
-    if not entries:
-        return
-    await bot.send_message(chat_id=chat_id, text=_build_digest(entries, "quarterly"))
+async def send_quarterly_digest(bot):
+    since = str(date.today() - timedelta(days=90))
+    for user_id in get_active_users():
+        entries = get_entries_since(user_id, since)
+        if not entries:
+            continue
+        await bot.send_message(chat_id=user_id, text=_build_digest(entries, "quarterly"))
