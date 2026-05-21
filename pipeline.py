@@ -12,11 +12,22 @@ MODEL = "gemini-2.0-flash-lite"
 
 _api_semaphore = asyncio.Semaphore(1)
 
+
+def _generate_with_retry(fn, max_retries=4):
+    for attempt in range(max_retries):
+        try:
+            return fn()
+        except Exception as e:
+            if "429" in str(e) and attempt < max_retries - 1:
+                time.sleep(5 * (2 ** attempt))  # 5s, 10s, 20s, 40s
+                continue
+            raise
+
 DIVIDER = "━" * 40
 
 
 def _extract_image(file_bytes: bytes) -> str:
-    response = client.models.generate_content(
+    response = _generate_with_retry(lambda: client.models.generate_content(
         model=MODEL,
         contents=[
             types.Part.from_bytes(data=file_bytes, mime_type="image/jpeg"),
@@ -31,7 +42,7 @@ ON-SCREEN TEXT:
 VISUAL DESCRIPTION:
 [Brief description of what is shown]""",
         ],
-    )
+    ))
     return response.text
 
 
@@ -44,13 +55,13 @@ def _extract_video(file_bytes: bytes) -> str:
         while video_file.state.name == "PROCESSING":
             time.sleep(3)
             video_file = client.files.get(name=video_file.name)
-        response = client.models.generate_content(
+        response = _generate_with_retry(lambda: client.models.generate_content(
             model=MODEL,
             contents=[
                 video_file,
                 "Extract ALL text from subtitles and overlays. Transcribe all speech. Describe what is happening.",
             ],
-        )
+        ))
         return response.text
     finally:
         if os.path.exists(tmp_path):
@@ -78,7 +89,7 @@ Return a JSON with these fields:
 }}
 Return ONLY valid JSON."""
 
-    response = client.models.generate_content(model=MODEL, contents=prompt)
+    response = _generate_with_retry(lambda: client.models.generate_content(model=MODEL, contents=prompt))
     text = response.text.strip().replace("```json", "").replace("```", "").strip()
     data = json.loads(text)
     # guard: ensure no nested dicts slip through
