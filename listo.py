@@ -24,6 +24,36 @@ media_group_buffer = defaultdict(list)
 media_group_tasks = {}
 
 
+TELEGRAM_MAX = 4000
+
+
+def _split_for_telegram(text: str) -> list[str]:
+    if len(text) <= TELEGRAM_MAX:
+        return [text]
+    chunks, current = [], ""
+    for line in text.split("\n"):
+        if len(line) > TELEGRAM_MAX:
+            if current:
+                chunks.append(current)
+                current = ""
+            for i in range(0, len(line), TELEGRAM_MAX):
+                chunks.append(line[i:i + TELEGRAM_MAX])
+            continue
+        if len(current) + len(line) + 1 > TELEGRAM_MAX:
+            chunks.append(current)
+            current = line
+        else:
+            current = f"{current}\n{line}" if current else line
+    if current:
+        chunks.append(current)
+    return chunks
+
+
+async def _send_chunked(chat_id: int, text: str):
+    for chunk in _split_for_telegram(text):
+        await bot.send_message(chat_id=chat_id, text=chunk)
+
+
 def _forward_context(message: Message) -> str:
     if not message.forward_origin:
         return ""
@@ -75,7 +105,7 @@ async def flush_media_group(media_group_id: str, chat_id: int):
     if "error" not in result:
         fields = extract_db_fields(result)
         save_entry(user_id=user_id, media_type="image", raw_content=result.get("raw_content", ""), formatted_output=formatted, **fields)
-    await bot.send_message(chat_id=chat_id, text=formatted)
+    await _send_chunked(chat_id, formatted)
 
 
 @dp.message(F.photo)
@@ -101,7 +131,7 @@ async def handle_photo(message: Message):
     if "error" not in result:
         fields = extract_db_fields(result)
         save_entry(user_id=message.from_user.id, media_type="image", raw_content=result.get("raw_content", ""), message_id=message.message_id, formatted_output=formatted, **fields)
-    await message.answer(formatted)
+    await _send_chunked(message.chat.id, formatted)
 
 
 @dp.message(F.video | F.document)
@@ -119,7 +149,7 @@ async def handle_video(message: Message):
     if "error" not in result:
         fields = extract_db_fields(result)
         save_entry(user_id=message.from_user.id, media_type="video", raw_content=result.get("raw_content", ""), message_id=message.message_id, formatted_output=formatted, **fields)
-    await message.answer(formatted)
+    await _send_chunked(message.chat.id, formatted)
 
 
 @dp.message(F.text)
@@ -137,7 +167,7 @@ async def handle_text(message: Message):
     if "error" not in result:
         fields = extract_db_fields(result)
         save_entry(user_id=message.from_user.id, media_type="text", raw_content=result.get("raw_content", full_text), message_id=message.message_id, formatted_output=formatted, **fields)
-    await message.answer(formatted)
+    await _send_chunked(message.chat.id, formatted)
 
 
 async def main():
