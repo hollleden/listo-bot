@@ -12,7 +12,7 @@ mistral = Mistral(api_key=os.getenv("MISTRAL_API_KEY"))
 gemini = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
 
 MODEL_MISTRAL = "mistral-small-latest"
-MODEL_GEMINI = "gemini-2.0-flash-lite"
+MODEL_GEMINI = "gemini-2.5-flash"
 
 _api_semaphore = asyncio.Semaphore(1)
 
